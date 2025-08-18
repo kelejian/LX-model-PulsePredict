@@ -108,6 +108,31 @@ def get_case_ids_from_directory(waveform_dir, axis=None):
         print(f"在目录 {waveform_dir} 中找到 {len(case_ids)} 个 {axis} 轴的 case_id")
         return case_ids
 
+def inverse_transform(pred_tensor, target_tensor, scaler):
+    """
+    对预测和目标张量进行逆变换，以还原到原始物理尺度。
+
+    :param pred_tensor: 模型预测的归一化张量。
+    :param target_tensor: 真实的归一化目标张量。
+    :param scaler: 用于逆变换的scaler对象 (e.g., from scikit-learn)。
+    :return: 包含逆变换后的 (pred_orig, target_orig) 的元组。
+    """
+    if scaler is None:
+        return pred_tensor, target_tensor
+
+    original_shape = pred_tensor.shape
+    
+    # 使用 .detach() 确保此操作不影响计算图
+    pred_numpy = pred_tensor.detach().cpu().numpy().reshape(-1, 1)
+    pred_orig = scaler.inverse_transform(pred_numpy).reshape(original_shape)
+    pred_orig = torch.from_numpy(pred_orig).to(pred_tensor.device)
+
+    target_numpy = target_tensor.detach().cpu().numpy().reshape(-1, 1)
+    target_orig = scaler.inverse_transform(target_numpy).reshape(original_shape)
+    target_orig = torch.from_numpy(target_orig).to(target_tensor.device)
+    
+    return pred_orig, target_orig
+
 class MetricTracker:
     def __init__(self, *keys, writer=None):
         self.writer = writer

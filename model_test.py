@@ -4,9 +4,6 @@ import torch.nn as nn
 import torch.onnx
 from torchinfo import summary
 from torchviz import make_dot
-import onnx
-import onnxruntime
-
 
 # @profile
 def test_model(
@@ -96,23 +93,35 @@ def test_model(
 
     # 导出 ONNX 模型
     print("\n============== 导出 ONNX 模型 ==============")
+    
+    # 根据输入类型配置输入名称和动态轴
+    if isinstance(inputs, (tuple, list)):
+        input_names = [f"input_{i}" for i in range(len(inputs))]
+        dynamic_axes = {f"input_{i}": {0: "batch_size"} for i in range(len(inputs))}
+    else:
+        input_names = ["input"]
+        dynamic_axes = {"input": {0: "batch_size"}}
+    
+    # 配置输出名称和动态轴
+    if isinstance(outputs, (tuple, list)):
+        output_names = [f"output_{i}" for i in range(len(outputs))]
+        for i in range(len(outputs)):
+            dynamic_axes[f"output_{i}"] = {0: "batch_size"}
+    else:
+        output_names = ["output"]
+        dynamic_axes["output"] = {0: "batch_size"}
+    
     torch.onnx.export(
         model,
         _input_data,
         onnx_file_path,
-        input_names=[f"input_{i}" for i in range(len(inputs))],
-        output_names=["output"],
-        dynamic_axes={f"input_{i}": {0: "batch_size"} for i in range(len(inputs))},
+        input_names=input_names,
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
         opset_version=11,
     )
     print(f"✔ ONNX 模型已保存至 {onnx_file_path}")
     print("在 https://netron.app/ 上查看 ONNX 模型结构")
-
-    # 验证 ONNX 模型
-    print("\n============== 验证 ONNX 模型 ==============")
-    onnx_model = onnx.load(onnx_file_path)
-    onnx.checker.check_model(onnx_model)
-    print("✔ ONNX 模型验证成功！")
 
     # # 使用 ONNX Runtime 推理
     # print("\n============== ONNX Runtime 推理 ==============")
@@ -127,37 +136,23 @@ def test_model(
     # ort_outs = ort_session.run(None, ort_inputs)
     # print(f"ONNX 推理输出：{ort_outs}")
 
-
-# 示例用法
 if __name__ == "__main__":
-    from utils.models import TeacherModel, StudentModel
+    from utils import read_json
+    from parse_config import ConfigParser
+    import model.model as module_arch
 
     # 模型实例化
-    num_classes_of_discrete = [7, 2, 2, 3]  # 离散特征的类别数
-    Teachermodel = TeacherModel(num_classes_of_discrete).cuda()
-    Studentmodel = StudentModel(num_classes_of_discrete).cuda()
+    config = ConfigParser(read_json('config.json'))
+    Pulsemodel = config.init_obj('arch', module_arch)
+    
+    # 将模型移动到CUDA设备
+    Pulsemodel = Pulsemodel.cuda()
 
     # 示例输入数据（模拟数据集第1个batch）
     batch_size = 128
-    time_steps = 150
 
-    # x_acc 输入，形状 (batch_size, 2, time_steps)
-    x_acc = torch.randn(batch_size, 2, time_steps).cuda()  # 随机生成加速度曲线数据
-
-    # x_att_continuous 输入，形状 (batch_size, 4)
-    x_att_continuous = torch.randn(batch_size, 4).cuda()  # 随机生成连续特征
-
-    # x_att_discrete 输入，形状 (batch_size, 4)
-    x_att_discrete = torch.cat([
-        torch.randint(0, 7, (batch_size, 1)),  # collision overlap rate (0~6)
-        torch.randint(0, 2, (batch_size, 1)),  # belt usage (0/1)
-        torch.randint(0, 2, (batch_size, 1)),  # airbag usage (0/1)
-        torch.randint(0, 3, (batch_size, 1))   # occupant size (0/1/2)
-    ], dim=1).cuda()  # 随机生成离散特征
-
-    # 模拟真实标签
-    y_HIC = torch.randn(batch_size).cuda()  # 随机生成 HIC 标签
+    y = torch.randn(batch_size, 3, 200).cuda()
+    x = torch.randn(batch_size, 3).cuda()  # 随机生成连续特征
 
     # 测试模型
-    test_model(Teachermodel, inputs=(x_acc, x_att_continuous, x_att_discrete), labels=y_HIC)
-    # test_model(Studentmodel, inputs=(x_att_continuous, x_att_discrete), labels=y_HIC)
+    test_model(Pulsemodel, inputs=x, labels=y)

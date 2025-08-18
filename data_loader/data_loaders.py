@@ -61,7 +61,7 @@ class CollisionDataset(Dataset):
         """
         self.target_scaler = target_scaler
 
-        # 加载预处理后的波形数据，并从中获取所有 case_id
+        # 加载预处理后的波形数据，并从中获取所有原始 case_id
         self.pulses_data = np.load(processed_pulses_path)
         self.case_ids = np.array(sorted([int(k) for k in self.pulses_data.keys()]))
         
@@ -86,7 +86,7 @@ class CollisionDataset(Dataset):
         self.features = torch.tensor(
             np.stack([norm_velocities, norm_angles, norm_overlaps], axis=1),
             dtype=torch.float32
-        )
+        ) # 形状 (N, 3)，N为样本数
 
     def __len__(self):
         """
@@ -117,65 +117,84 @@ class CollisionDataset(Dataset):
 #==========================================================================================
 #  DataLoader 类
 #==========================================================================================
+import joblib # 导入 joblib 用于保存和加载 scaler
 class CollisionDataLoader(BaseDataLoader):
     """
     用于加载碰撞波形数据的 DataLoader 类。
+    【版本说明】: 此版本实现了在训练时拟合并保存Scaler，在测试时加载Scaler的功能。
     """
-    def __init__(self, data_dir, waveform_subdir, batch_size, case_ids=None, normalization_mode='none', shuffle=True, validation_split=0.1, num_workers=1, training=True):
+    def __init__(self, params_npz_path, processed_pulses_path, batch_size, pulse_norm_mode='none', scaler_path=None, shuffle=True, validation_split=0.1, num_workers=1, training=True):
         """
-        :param data_dir: 数据目录
-        :param waveform_subdir: 波形数据子目录
-        :param batch_size: 批量大小
-        :param case_ids: 可选的案例ID列表，如果为None则加载所有案例
-        :param normalization_mode: 归一化模式，'none', 'minmax', 'absmax'之一
-        :param shuffle: 是否打乱数据
-        :param validation_split: 验证集比例
-        :param num_workers: 数据加载的工作线程数
-        :param training: 是否为训练模式
+        :param params_npz_path: 包含所有工况参数的 npz 文件路径。
+        :param processed_pulses_path: 要加载的预处理波形数据文件路径.
+        :param batch_size: 批量大小。
+        :param pulse_norm_mode: 归一化模式，'none', 'minmax', 'absmax'之一。
+        :param scaler_path: 保存或加载Scaler的文件路径 (e.g., 'saved/scalers/pulse_scaler.joblib')。
+        :param shuffle: 是否打乱数据。在非训练模式下会被强制设为 False。
+        :param validation_split: 验证集比例。在非训练模式下会被强制设为 0。
+        :param num_workers: 数据加载的工作线程数。
+        :param training: 是否为训练模式。这会影响Scaler的加载/保存行为。
         """
-        # --- 路径和 case_ids 的准备 ---
-        npz_path = os.path.join(data_dir, '仿真采样', 'distribution.npz')
-        waveform_dir = os.path.join(data_dir, waveform_subdir)
-        if case_ids is None: self.case_ids = np.arange(1, 1801)
-        else: self.case_ids = case_ids
-        
+        if not os.path.exists(params_npz_path):
+            raise FileNotFoundError(f"工况参数文件未找到: {params_npz_path}。")
+        if not os.path.exists(processed_pulses_path):
+             raise FileNotFoundError(f"预处理波形文件未找到: {processed_pulses_path}。")
+
         target_scaler = None
-        if normalization_mode != 'none':
-            # --- 加载一次数据，然后根据模式选择scaler ---
-            print(f"正在为目标波形加载数据以进行归一化 (模式: {normalization_mode})...")
-            all_waveforms_data = []
-            sampling_indices = np.arange(100, 20001, 100)
-            for case_id in self.case_ids:
-                try:
-                    # 为更精确计算全局值，这里将x,y,z三轴数据全部加载
-                    x_path = os.path.join(waveform_dir, f'x{case_id}.csv')
-                    y_path = os.path.join(waveform_dir, f'y{case_id}.csv')
-                    z_path = os.path.join(waveform_dir, f'z{case_id}.csv')
-                    all_waveforms_data.append(pd.read_csv(x_path, sep='\t', header=None, usecols=[1]).values[sampling_indices])
-                    all_waveforms_data.append(pd.read_csv(y_path, sep='\t', header=None, usecols=[1]).values[sampling_indices])
-                    all_waveforms_data.append(pd.read_csv(z_path, sep='\t', header=None, usecols=[1]).values[sampling_indices])
-                except FileNotFoundError:
-                    continue
-            if not all_waveforms_data: raise ValueError("未能加载任何波形数据。")
-            
-            full_dataset_np = np.concatenate(all_waveforms_data)
+        # --- Scaler 处理 ---
+        if pulse_norm_mode != 'none':
+            if scaler_path is None:
+                raise ValueError("当 pulse_norm_mode 不为 'none' 时, 必须提供 'scaler_path'。")
 
-            if normalization_mode == 'minmax':
-                global_min = full_dataset_np.min()
-                global_max = full_dataset_np.max()
-                print(f"全局Min: {global_min:.4f}, 全局Max: {global_max:.4f}")
-                target_scaler = MinMaxScaler(feature_range=(-1, 1))
-                target_scaler.fit([[global_min], [global_max]])
-            elif normalization_mode == 'absmax':
-                target_scaler = CustomAbsMaxScaler()
-                target_scaler.fit(full_dataset_np)
-                print(f"全局绝对值Max: {target_scaler.data_abs_max_:.4f}")
+            # 如果是训练模式，则拟合并保存Scaler
+            if training:
+                print(f"训练模式：正在为目标波形拟合Scaler (模式: {pulse_norm_mode})...")
+                
+                with np.load(processed_pulses_path) as data:
+                    all_waveforms_data = [data[key] for key in data.keys()]
+                
+                if not all_waveforms_data: 
+                    raise ValueError(f"未能从 {processed_pulses_path} 加载任何波形数据。")
+                
+                full_dataset_np = np.concatenate(all_waveforms_data, axis=0)
+
+                if pulse_norm_mode == 'minmax':
+                    scaler = MinMaxScaler(feature_range=(-1, 1))
+                    target_scaler = scaler.fit(full_dataset_np.reshape(-1, 1))
+                    print(f"MinMaxScaler 拟合完毕。Min: {target_scaler.data_min_[0]:.4f}, Max: {target_scaler.data_max_[0]:.4f}")
+                
+                elif pulse_norm_mode == 'absmax':
+                    target_scaler = CustomAbsMaxScaler().fit(full_dataset_np)
+                    print(f"CustomAbsMaxScaler 拟合完毕。全局绝对值Max: {target_scaler.data_abs_max_:.4f}")
+                else:
+                    raise ValueError(f"未知的 pulse_norm_mode: {pulse_norm_mode}")
+                
+                # 创建目录并保存Scaler
+                os.makedirs(os.path.dirname(scaler_path), exist_ok=True)
+                joblib.dump(target_scaler, scaler_path)
+                print(f"Scaler 已保存至: {scaler_path}")
+
+            # 如果是测试模式，则直接加载Scaler
             else:
-                raise ValueError(f"未知的 normalization_mode: {normalization_mode}")
-            
-            print("Scaler拟合完毕。")
+                print(f"测试模式：正在从 {scaler_path} 加载Scaler...")
+                try:
+                    target_scaler = joblib.load(scaler_path)
+                    print("Scaler 加载成功。")
+                except FileNotFoundError:
+                    raise FileNotFoundError(f"Scaler文件未找到: {scaler_path}。请先在训练模式下运行以生成Scaler文件。")
+        
+        # --- 根据模式调整参数 ---
+        if not training:
+            shuffle = False
+            validation_split = 0.0
 
-        # 实例化Dataset
-        self.dataset = CollisionDataset(npz_path, waveform_dir, self.case_ids, target_scaler)
+        # --- 实例化Dataset ---
+        self.dataset = CollisionDataset(params_npz_path, processed_pulses_path, target_scaler)
+        
+        # 保存一些有用的属性
+        self.pulse_norm_mode = pulse_norm_mode
+        self.training = training
+        self.target_scaler = target_scaler
 
+        # --- 调用父类构造函数 ---
         super().__init__(self.dataset, batch_size, shuffle, validation_split, num_workers)

@@ -9,15 +9,32 @@
             "dropout": 0.2
         }
     },
-    "data_loader": {
+    "data_loader_train": {
         "type": "CollisionDataLoader",
         "args": {
-            "data_dir": "data/",
+            "params_npz_path": "data/params.npz",
+            "processed_pulses_path": "data/processed_pulses_train.npz",
             "batch_size": 64,
             "shuffle": true,
             "validation_split": 0.1,
-            "num_workers": 2,
-            "normalization_mode": "absmax"
+            "num_workers": 1,
+            "pulse_norm_mode": "absmax",
+            "scalar_save_path": "data/pulse_scaler.joblib",
+            "training": true
+        }
+    },
+    "data_loader_test": {
+        "type": "CollisionDataLoader",
+        "args": {
+            "params_npz_path": "data/params.npz",
+            "processed_pulses_path": "data/processed_pulses_test.npz",
+            "batch_size": 64,
+            "shuffle": false,
+            "validation_split": 0,
+            "num_workers": 1,
+            "normalization_mode": "absmax",
+            "scalar_save_path": "data/pulse_scaler.joblib",
+            "training": false
         }
     },
     "optimizer": {
@@ -30,8 +47,8 @@
     "loss": {
         "type": "GaussianNLLLoss",
         "args": {
-            "full": true,
-            "eps": 1e-6
+            "eps": 1e-6,
+            "reduction": "mean"
         }
     },
     "metrics": [

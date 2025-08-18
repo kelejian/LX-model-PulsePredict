@@ -22,8 +22,8 @@ def main(config):
     logger = config.get_logger('train')
 
     # setup data_loader instances
-    data_loader = config.init_obj('data_loader', module_data)
-    valid_data_loader = data_loader.split_validation()
+    data_loader = config.init_obj('data_loader_train', module_data) # 只包含训练集数据的加载器，但内部已经划分好了验证集的范围
+    valid_data_loader = data_loader.split_validation() # 把验证集加载器作为一个独立的对象分离出来
 
     # build model architecture, then print to console
     model = config.init_obj('arch', module_arch)
@@ -36,7 +36,8 @@ def main(config):
         model = torch.nn.DataParallel(model, device_ids=device_ids)
 
     # get function handles of loss and metrics
-    criterion = getattr(module_loss, config['loss'])
+    # criterion = getattr(module_loss, config['loss'])
+    criterion = config.init_obj('loss', module_loss)
     metrics = [getattr(module_metric, met) for met in config['metrics']]
 
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
@@ -55,7 +56,7 @@ def main(config):
 
 
 if __name__ == '__main__':
-    args = argparse.ArgumentParser(description='PyTorch Template')
+    args = argparse.ArgumentParser(description='LX-Project Training')
     args.add_argument('-c', '--config', default=None, type=str,
                       help='config file path (default: None)')
     args.add_argument('-r', '--resume', default=None, type=str,

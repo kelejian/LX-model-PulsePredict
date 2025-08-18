@@ -64,16 +64,19 @@ if __name__ == '__main__':
     DATA_DIR = 'data/' # 根据你的实际路径修改
     WAVEFORM_SUBDIR = 'L-C-V-P-1800' # 根据你的实际路径修改
     
-    # 假设你已经有了完整的 case_id 列表
-    # 在实际使用中，你可能需要先从目录中获取所有可用的 case_id
-    # from utils.util import get_complete_case_ids
-    # all_case_ids = get_complete_case_ids(os.path.join(DATA_DIR, WAVEFORM_SUBDIR))
-    all_case_ids = np.arange(1, 1801)
+    # 分别为训练阶段和测试阶段定义案例ID列表
+    train_case_ids = [1, 2, 3, 4, 5]  # 示例训练案例ID
+    test_case_ids = [6, 7, 8, 9, 10]  # 示例测试案例ID
 
 
     # 调用函数进行处理和保存
     process_and_save_pulses(
         waveform_dir=os.path.join(DATA_DIR, WAVEFORM_SUBDIR),
-        case_id_list=all_case_ids,
-        output_path=os.path.join(DATA_DIR, 'processed_pulses.npz')
+        case_id_list=train_case_ids,
+        output_path=os.path.join(DATA_DIR, 'processed_pulses_train.npz')
+    )
+    process_and_save_pulses(
+        waveform_dir=os.path.join(DATA_DIR, WAVEFORM_SUBDIR),
+        case_id_list=test_case_ids,
+        output_path=os.path.join(DATA_DIR, 'processed_pulses_test.npz')
     )
