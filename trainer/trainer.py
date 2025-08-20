@@ -43,7 +43,7 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.train_metrics.reset()
         scaler = getattr(self.data_loader, 'target_scaler', None)
-        for batch_idx, (data, target) in enumerate(self.data_loader):
+        for batch_idx, (data, target, case_ids) in enumerate(self.data_loader):
             data, target = data.to(self.device), target.to(self.device)
 
             self.optimizer.zero_grad()
@@ -98,7 +98,7 @@ class Trainer(BaseTrainer):
         self.valid_metrics.reset()
         scaler = getattr(self.data_loader, 'target_scaler', None)
         with torch.no_grad():
-            for batch_idx, (data, target) in enumerate(self.valid_data_loader):
+            for batch_idx, (data, target, case_ids) in enumerate(self.valid_data_loader):
                 data, target = data.to(self.device), target.to(self.device)
                 # -----------------------ADJUST-------------------------------
                 # output = self.model(data)

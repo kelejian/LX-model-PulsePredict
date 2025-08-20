@@ -112,7 +112,7 @@ class CollisionDataset(Dataset):
             
         target_waveforms = torch.tensor(waveforms_np, dtype=torch.float32)
 
-        return input_features, target_waveforms # 返回特征和波形数据
+        return input_features, target_waveforms, case_id # 返回特征和波形数据，及其原始case_id
 
 #==========================================================================================
 #  DataLoader 类

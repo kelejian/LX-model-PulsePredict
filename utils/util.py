@@ -4,7 +4,9 @@ import pandas as pd
 from pathlib import Path
 from itertools import repeat
 from collections import OrderedDict
-
+import matplotlib.pyplot as plt
+import numpy as np
+import os
 
 def ensure_dir(dirname):
     dirname = Path(dirname)
@@ -132,6 +134,85 @@ def inverse_transform(pred_tensor, target_tensor, scaler):
     target_orig = torch.from_numpy(target_orig).to(target_tensor.device)
     
     return pred_orig, target_orig
+
+
+def plot_waveform_comparison(pred_wave, true_wave, params, case_id, epoch, batch_idx, sample_idx, save_dir):
+    """
+    绘制单样本的预测与真实波形对比图，并在标题中显示工况参数。
+
+    :param pred_wave: 单个样本的预测波形 (numpy array, shape: (3, 200))
+    :param true_wave: 单个样本的真实波形 (numpy array, shape: (3, 200))
+    :param params: 一个包含原始工况参数的字典, e.g., {'vel': 50.0, 'ang': 30.0, 'ov': 0.5}
+    :param case_id: 样本的原始Case ID。
+    :param epoch: 当前的epoch数或'test'字符串。
+    :param batch_idx: 当前的批次索引。
+    :param sample_idx: 样本在批次中的索引。
+    :param save_dir: 图片保存的根目录 (仅在训练时使用)。
+    """
+    # 根据是训练阶段还是测试阶段，决定图片保存目录
+    if epoch == 'test':
+        plot_dir = os.path.join(save_dir, 'fig')
+    else:
+        plot_dir = os.path.join(save_dir, 'fig', f'epoch_{epoch}')
+    
+    # 确保保存图片的目录存在
+    os.makedirs(plot_dir, exist_ok=True)
+
+    # 将PyTorch Tensors转换为Numpy arrays (如果尚未转换)
+    if not isinstance(pred_wave, np.ndarray):
+        pred_wave = pred_wave.detach().cpu().numpy()
+    if not isinstance(true_wave, np.ndarray):
+        true_wave = true_wave.detach().cpu().numpy()
+
+    # 创建时间轴 (1ms to 200ms)
+    time = np.arange(1, 201)
+    fig, axes = plt.subplots(3, 1, figsize=(12, 12))
+    
+    # --- 创建包含工况参数的新标题 ---
+    vel = params['vel']
+    ang = params['ang']
+    ov = params['ov']
+    title = (f'Case ID: {case_id}, Epoch: {epoch}, Batch: {batch_idx}, Sample: {sample_idx}\n'
+             f'Velocity: {vel:.1f} km/h, Angle: {ang:.1f}°, Overlap: {ov:.2f}'
+             )
+    fig.suptitle(title, fontsize=15, fontweight='bold')
+    # --------------------------------
+
+    # X方向加速度
+    axes[0].plot(time, true_wave[0, :], 'b-', linewidth=2, label='Ground Truth')
+    axes[0].plot(time, pred_wave[0, :], 'r--', linewidth=1.5, label='Prediction')
+    axes[0].set_ylabel('Acceleration (m/s²)', fontsize=12)
+    axes[0].set_title('X-direction Acceleration', fontsize=12)
+    axes[0].grid(True, alpha=0.3)
+    axes[0].legend()
+
+    # Y方向加速度
+    axes[1].plot(time, true_wave[1, :], 'b-', linewidth=2, label='Ground Truth')
+    axes[1].plot(time, pred_wave[1, :], 'r--', linewidth=1.5, label='Prediction')
+    axes[1].set_ylabel('Acceleration (m/s²)', fontsize=12)
+    axes[1].set_title('Y-direction Acceleration', fontsize=12)
+    axes[1].grid(True, alpha=0.3)
+    axes[1].legend()
+
+    # Z方向旋转加速度
+    axes[2].plot(time, true_wave[2, :], 'b-', linewidth=2, label='Ground Truth')
+    axes[2].plot(time, pred_wave[2, :], 'r--', linewidth=1.5, label='Prediction')
+    axes[2].set_xlabel('Time (ms)', fontsize=12)
+    axes[2].set_ylabel('Angular Acceleration (rad/s²)', fontsize=12)
+    axes[2].set_title('Z-direction Rotational Acceleration', fontsize=12)
+    axes[2].grid(True, alpha=0.3)
+    axes[2].legend()
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.99])
+    
+    if epoch == 'test':
+        plot_filename = f'test_batch_{batch_idx}_sample_{sample_idx}_case_{case_id}.png'
+    else:
+        plot_filename = f'epoch_{epoch}_batch_{batch_idx}_sample_{sample_idx}_case_{case_id}.png'
+
+    save_path = os.path.join(plot_dir, plot_filename)
+    plt.savefig(save_path, dpi=200, bbox_inches='tight')
+    plt.close()
 
 class MetricTracker:
     def __init__(self, *keys, writer=None):
