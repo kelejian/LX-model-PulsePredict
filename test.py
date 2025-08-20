@@ -13,6 +13,8 @@ def main(config):
 
     # setup data_loader instances
     data_loader = config.init_obj('data_loader_test', module_data)
+    # 打印测试集数据量
+    logger.info(f"测试集数据量: {len(data_loader.dataset)}")
 
     # build model architecture
     model = config.init_obj('arch', module_arch)
@@ -39,7 +41,7 @@ def main(config):
     # total_metrics = torch.zeros(len(metric_fns))
     total_metrics = {met.__name__: 0.0 for met in metric_fns} # 使用字典存储指标
 
-    scaler = data_loader.target_scaler
+    scaler = getattr(data_loader, 'target_scaler', None) # 获取数据集中的scaler属性，如果有的话
 
     with torch.no_grad():
         for i, (data, target) in enumerate(tqdm(data_loader)):

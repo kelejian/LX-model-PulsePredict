@@ -23,6 +23,8 @@ def process_and_save_pulses(waveform_dir, case_id_list, output_path, downsample_
 
     processed_data = {}
 
+    successful_cases = []
+
     print(f"开始处理 {len(case_id_list)} 个案例的波形数据...")
     for case_id in tqdm(case_id_list, desc="Processing Crash Pulses"):
         try:
@@ -50,6 +52,8 @@ def process_and_save_pulses(waveform_dir, case_id_list, output_path, downsample_
             # 以 case_id 为键，存储处理后的波形数据
             processed_data[str(case_id)] = waveforms_np
 
+            successful_cases.append(case_id)
+
         except FileNotFoundError:
             print(f"警告：读取案例 {case_id} 文件时出错，已跳过。")
             continue
@@ -57,16 +61,20 @@ def process_and_save_pulses(waveform_dir, case_id_list, output_path, downsample_
     # 保存到 .npz 文件
     np.savez(output_path, **processed_data)
     print(f"数据处理完成，已保存至 {output_path}")
+    print(f"成功处理的数据数目：{len(successful_cases)}")
 
 if __name__ == '__main__':
     # 定义你的数据目录和案例ID
-    waveform_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\results_test' # 根据你的实际路径修改
-    output_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\results_test'
+    waveform_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\data' 
+    output_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\data'
     
     # 分别为训练阶段和测试阶段定义案例ID列表
-    train_case_ids = [1, 3, 5, 6, 7, 8]  # 示例训练案例ID
-    test_case_ids = [6, 7, 8, 9]  # 示例测试案例ID
-
+    num_train = 1800*0.8
+    num_test = 1800*0.2
+    # 从1-1800中分别随机取训练案例ID和测试案例ID，且不能重复
+    all_case_ids = set(range(1, 1801))
+    train_case_ids = set(np.random.choice(list(all_case_ids), size=int(num_train), replace=False))
+    test_case_ids = all_case_ids - train_case_ids
 
     # 调用函数进行处理和保存
     process_and_save_pulses(

@@ -248,16 +248,6 @@ class ISORating:
         else:
             return ((max_allowed_error - slope_error) / max_allowed_error) ** exponent_factor
 
-
-def root_mean_squared_error(output, target):
-    """
-    计算均方根误差 (RMSE)。
-    计算在所有批次、所有通道和所有时间点上的总体RMSE。
-    """
-    with torch.no_grad():
-        loss = torch.sqrt(torch.mean((output - target)**2))
-    return loss.item()
-
 def _calculate_iso_rating_for_channel(output, target, channel_idx, dt=0.001):
     """
     内部帮助函数，用于计算指定通道的平均ISO-rating。
@@ -299,6 +289,44 @@ def iso_rating_z(output, target, dt=0.001):
     计算 Z 方向波形的平均 ISO-rating。
     """
     return _calculate_iso_rating_for_channel(output, target, channel_idx=2, dt=dt)
+
+def _rmse_for_channel(output, target, channel_idx):
+    """
+    内部帮助函数，用于计算指定通道的均方根误差 (RMSE)。
+    
+    :param output: 模型的预测输出张量，形状为 (batch_size, 3, 200)。
+    :param target: 真实的标签张量，形状为 (batch_size, 3, 200)。
+    :param channel_idx: 要计算的通道索引 (0 for x, 1 for y, 2 for z)。
+    :return: 指定通道上的RMSE标量值。
+    """
+    with torch.no_grad():
+        # 从输出和目标张量中选取特定通道的数据
+        output_channel = output[:, channel_idx, :]
+        target_channel = target[:, channel_idx, :]
+        
+        # 计算该通道的RMSE
+        loss = torch.sqrt(torch.mean((output_channel - target_channel)**2))
+        
+    return loss.item()
+
+def rmse_x(output, target):
+    """
+    计算 X 方向波形的均方根误差 (RMSE)。
+    """
+    return _rmse_for_channel(output, target, channel_idx=0)
+
+def rmse_y(output, target):
+    """
+    计算 Y 方向波形的均方根误差 (RMSE)。
+    """
+    return _rmse_for_channel(output, target, channel_idx=1)
+
+def rmse_z(output, target):
+    """
+    计算 Z 方向波形的均方根误差 (RMSE)。
+    """
+    return _rmse_for_channel(output, target, channel_idx=2)
+
 
 if __name__ == "__main__":
     # 测试代码

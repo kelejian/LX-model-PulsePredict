@@ -12,7 +12,7 @@ class PulseMLP(BaseModel):
     此模型输出高斯分布的均值和方差，以配合 GaussianNLLLoss 使用。
     """
     def __init__(self, input_dim=3, output_channels=3, output_points=200, 
-                 hidden_dims=256, num_layers=5, dropout=0.2):
+                 hidden_dims=256, num_layers=3, dropout=0.2):
         """
         模型初始化。
         
@@ -43,10 +43,10 @@ class PulseMLP(BaseModel):
         
         # 2. 定义两个独立的"头"（线性层），分别用于预测均值和对数方差
         # 均值头
-        self.mean_head = nn.Linear(hidden_dims, output_dim)
+        self.mean_head = nn.Linear(hidden_dims + input_dim, output_dim)
         
         # 对数方差头 (预测log(var)而不是直接预测var，以保证方差为正，且训练更稳定)
-        self.log_var_head = nn.Linear(hidden_dims, output_dim)
+        self.log_var_head = nn.Linear(hidden_dims + input_dim, output_dim)
 
     def forward(self, x):
         """
@@ -60,7 +60,10 @@ class PulseMLP(BaseModel):
         
         # 通过骨干网络提取特征
         latent_features = self.backbone(x)  # -> (batch_size, hidden_dims)
-        
+
+        # concat特征和输入
+        latent_features = torch.cat([latent_features, x], dim=-1)  # -> (batch_size, hidden_dims + 3)
+
         # 从特征中预测均值
         mean = self.mean_head(latent_features) # -> (batch_size, 600)
         

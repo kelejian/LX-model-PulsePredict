@@ -25,7 +25,10 @@ class Trainer(BaseTrainer):
         self.valid_data_loader = valid_data_loader
         self.do_validation = self.valid_data_loader is not None
         self.lr_scheduler = lr_scheduler
-        self.log_step = int(np.sqrt(data_loader.batch_size))
+        # 计算每个epoch的总批次数
+        len_epoch = len(self.data_loader)
+        # 保证每个epoch至少打印5次日志(除非总批次数小于5)
+        self.log_step = max(1, len_epoch // 5)
 
         self.train_metrics = MetricTracker('loss', *[m.__name__ for m in self.metric_ftns], writer=self.writer)
         self.valid_metrics = MetricTracker('loss', *[m.__name__ for m in self.metric_ftns], writer=self.writer)
@@ -39,7 +42,7 @@ class Trainer(BaseTrainer):
         """
         self.model.train()
         self.train_metrics.reset()
-        scaler = getattr(self.data_loader, 'scaler', None)
+        scaler = getattr(self.data_loader, 'target_scaler', None)
         for batch_idx, (data, target) in enumerate(self.data_loader):
             data, target = data.to(self.device), target.to(self.device)
 
@@ -93,7 +96,7 @@ class Trainer(BaseTrainer):
         """
         self.model.eval()
         self.valid_metrics.reset()
-        scaler = self.data_loader.target_scaler
+        scaler = getattr(self.data_loader, 'target_scaler', None)
         with torch.no_grad():
             for batch_idx, (data, target) in enumerate(self.valid_data_loader):
                 data, target = data.to(self.device), target.to(self.device)
