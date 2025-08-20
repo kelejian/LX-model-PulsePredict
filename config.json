@@ -5,35 +5,35 @@
         "type": "PulseMLP",
         "args": {
             "hidden_dims": 256,
-            "num_layers": 5,
+            "num_layers": 4,
             "dropout": 0.2
         }
     },
     "data_loader_train": {
         "type": "CollisionDataLoader",
         "args": {
-            "params_npz_path": "data/params.npz",
-            "processed_pulses_path": "data/processed_pulses_train.npz",
-            "batch_size": 64,
+            "params_npz_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\distribution_0811.npz",
+            "processed_pulses_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\processed_pulses_train.npz",
+            "batch_size": 2,
             "shuffle": true,
-            "validation_split": 0.1,
-            "num_workers": 1,
+            "validation_split": 0.4,
+            "num_workers": 0,
             "pulse_norm_mode": "absmax",
-            "scalar_save_path": "data/pulse_scaler.joblib",
+            "scaler_path": "data_loader/pulse_scaler.joblib",
             "training": true
         }
     },
     "data_loader_test": {
         "type": "CollisionDataLoader",
         "args": {
-            "params_npz_path": "data/params.npz",
-            "processed_pulses_path": "data/processed_pulses_test.npz",
+            "params_npz_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\distribution_0811.npz",
+            "processed_pulses_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\processed_pulses_test.npz",
             "batch_size": 64,
             "shuffle": false,
             "validation_split": 0,
-            "num_workers": 1,
-            "normalization_mode": "absmax",
-            "scalar_save_path": "data/pulse_scaler.joblib",
+            "num_workers": 0,
+            "pulse_norm_mode": "absmax",
+            "scaler_path": "data_loader/pulse_scaler.joblib",
             "training": false
         }
     },

@@ -59,24 +59,23 @@ def process_and_save_pulses(waveform_dir, case_id_list, output_path, downsample_
     print(f"数据处理完成，已保存至 {output_path}")
 
 if __name__ == '__main__':
-    # --- 使用示例 ---
     # 定义你的数据目录和案例ID
-    DATA_DIR = 'data/' # 根据你的实际路径修改
-    WAVEFORM_SUBDIR = 'L-C-V-P-1800' # 根据你的实际路径修改
+    waveform_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\results_test' # 根据你的实际路径修改
+    output_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\results_test'
     
     # 分别为训练阶段和测试阶段定义案例ID列表
-    train_case_ids = [1, 2, 3, 4, 5]  # 示例训练案例ID
-    test_case_ids = [6, 7, 8, 9, 10]  # 示例测试案例ID
+    train_case_ids = [1, 3, 5, 6, 7, 8]  # 示例训练案例ID
+    test_case_ids = [6, 7, 8, 9]  # 示例测试案例ID
 
 
     # 调用函数进行处理和保存
     process_and_save_pulses(
-        waveform_dir=os.path.join(DATA_DIR, WAVEFORM_SUBDIR),
+        waveform_dir=waveform_dir,
         case_id_list=train_case_ids,
-        output_path=os.path.join(DATA_DIR, 'processed_pulses_train.npz')
+        output_path=os.path.join(output_dir, 'processed_pulses_train.npz')
     )
     process_and_save_pulses(
-        waveform_dir=os.path.join(DATA_DIR, WAVEFORM_SUBDIR),
+        waveform_dir=waveform_dir,
         case_id_list=test_case_ids,
-        output_path=os.path.join(DATA_DIR, 'processed_pulses_test.npz')
+        output_path=os.path.join(output_dir, 'processed_pulses_test.npz')
     )

@@ -1,131 +1,253 @@
 import torch
-
-import torch
 import numpy as np
-from fastdtw import fastdtw
+from dtw import dtw
 
-# ==========================================================================================
-# 内部帮助类，用于计算ISO_rating评价指标
-# ==========================================================================================
-class _ISO_ov():
-    def __init__(self, line_r, line_f):
-        # 确保输入是numpy array
-        self.line_r = np.asarray(line_r)
-        self.line_f = np.asarray(line_f)
-        # 预先计算相位得分，以便后续方法复用其结果
-        self.phase_score_val = self._phase_score()
+class ISORating:
+    """
+    根据 ISO/TS 18571:2024 标准，计算两条时间历史曲线的客观评级分数。
 
-    def _cora(self):
-        a0=0.05
-        b0=0.5
-        kz=2
-        curve=self.line_r
-        inner_up=curve+a0*np.max(np.abs(curve))
-        inner_down=curve-a0*np.max(np.abs(curve))
-        outter_up=curve+b0*np.max(np.abs(curve))
-        outter_down = curve - b0 * np.max(np.abs(curve))
+    该类实现了 Corridor, Phase, Magnitude, 和 Slope 四个子分数的计算，
+    并最终给出一个加权的综合ISO评级分数。
+    """
+    def __init__(self, analyzed_signal, reference_signal, dt=0.001):
+        """
+        初始化ISORating计算器。
 
-        curve=self.line_f
-        mark=np.zeros(len(curve))
-        for i in range(len(curve)):
-            if inner_down[i]<curve[i]<inner_up[i]:
-                mark[i]=1
-            elif outter_down[i]<curve[i]<outter_up[i]:
-                mark[i]=(np.min([outter_up[i]-curve[i],curve[i]-outter_down[i]])/(outter_up[i]-inner_up[i]))**kz
-            else:
-                mark[i]=0
-        return np.sum(mark)/len(curve)
+        参数:
+        analyzed_signal (array-like): 待评估信号 (Analyzed Signal, C(t))。
+                                      通常是计算机仿真(CAE)数据。
+        reference_signal (array-like): 参考信号 (Reference Signal, T(t))。
+                                       通常是物理试验(Test)数据。
+        dt (float): 信号的时间间隔，单位为秒。默认为 0.001s (对应1kHz采样率)。
+        """
+        if len(analyzed_signal) != len(reference_signal):
+            raise ValueError("输入信号 'analyzed_signal' 和 'reference_signal' 的长度必须相同。")
+            
+        self.analyzed_signal = np.asarray(analyzed_signal)
+        self.reference_signal = np.asarray(reference_signal)
+        self.dt = dt
 
-    def _phase_score(self):
-        yupo=0.2
-        kp=1
-        curve=self.line_r
-        line_f=self.line_f
-        n=len(curve)
+        # 初始化用于存储中间和最终结果的成员变量
+        self.iso_rating = None
+        self.corridor_score = None
+        self.phase_score = None
+        self.magnitude_score = None
+        self.slope_score = None
         
-        # 避免除以零的错误
-        if np.std(curve) == 0 or np.std(line_f) == 0:
-            self.r_shift = self.line_r
-            self.f_shift = self.line_f
-            return 1.0
+        # 用于存储相位校正后的曲线，供后续方法使用
+        self._shifted_analyzed = None
+        self._shifted_reference = None
 
-        shift_range = int(np.floor(yupo * n))
-        if shift_range == 0:
-            self.r_shift = self.line_r
-            self.f_shift = self.line_f
-            return 1.0
+    def calculate(self):
+        """
+        执行完整的ISO评级计算，并返回最终的综合分数。
 
-        corrs = [np.corrcoef(line_f[i:], curve[:-i-1])[0, 1] if i != n-1 else np.corrcoef(line_f[i:], curve[:-i])[0, 1] for i in range(shift_range)]
-        max_pos = np.argmax(corrs)
+        该方法会依次计算所有四个子分数，并将它们存储在类的成员变量中，
+        然后根据标准权重计算最终的综合分数。
 
-        self.r_shift = curve[max_pos:]
-        self.f_shift = line_f[:n-max_pos]
+        返回:
+        float: 最终的ISO综合评级分数 (R)。
+        """
+        # 优化点：如果已经计算过，直接返回结果，避免重复计算
+        if self.iso_rating is not None:
+            return self.iso_rating
 
-        if max_pos == 0:
-            ep = 1.0
+        # 1. 定义权重因子 (依据标准 Table 6.1)
+        w_corridor = 0.4
+        w_phase = 0.2
+        w_magnitude = 0.2
+        w_slope = 0.2
+
+        # 2. 依次调用私有方法计算各子分数，并将结果存储在成员变量中
+        #    注意：调用顺序很重要，因为幅值和斜率计算依赖于相位计算的结果
+        self.corridor_score = self._calculate_corridor_score()
+        self.phase_score = self._calculate_phase_score()
+        self.magnitude_score = self._calculate_magnitude_score()
+        self.slope_score = self._calculate_slope_score()
+
+        # 3. 根据标准公式(6.1)计算最终的综合分数
+        self.iso_rating = (w_corridor * self.corridor_score +
+                           w_phase * self.phase_score +
+                           w_magnitude * self.magnitude_score +
+                           w_slope * self.slope_score)
+
+        return self.iso_rating
+
+    def _calculate_corridor_score(self):
+        """计算廊道分数 (Z)。非对称。"""
+        a0 = 0.05
+        b0 = 0.50
+        kz = 2
+        
+        t_norm = np.max(np.abs(self.reference_signal))
+        delta_i = a0 * t_norm
+        delta_o = b0 * t_norm
+        
+        abs_diff = np.abs(self.reference_signal - self.analyzed_signal)
+        
+        mark = np.zeros_like(abs_diff, dtype=float)
+
+        # 情况1：在内走廊内 (得分=1)
+        inner_mask = abs_diff <= delta_i
+        mark[inner_mask] = 1.0
+
+        # 情况3：在内外走廊之间
+        between_mask = (abs_diff > delta_i) & (abs_diff <= delta_o)
+        denominator = delta_o - delta_i
+        if denominator > 1e-9: # 避免除以零
+            mark[between_mask] = ((delta_o - abs_diff[between_mask]) / denominator) ** kz
+        
+        return np.mean(mark)
+
+    def _calculate_phase_score(self):
+        """计算相位分数 (Ep)。对称。同时生成并存储移位后的曲线。"""
+        max_shift_percent = 0.2
+        exponent_factor = 1
+        
+        n = len(self.reference_signal)
+        max_shift_steps = int(np.floor(max_shift_percent * n))
+
+        # 计算所有可能的互相关值
+        # m=0 (不平移)
+        corr_orig = np.corrcoef(self.reference_signal, self.analyzed_signal)[0, 1]
+        
+        # m > 0 (左移和右移)
+        rou_L = np.zeros(max_shift_steps)
+        rou_R = np.zeros(max_shift_steps)
+        for m in range(1, max_shift_steps + 1):
+            # 左移 m 步
+            rou_L[m-1] = np.corrcoef(self.analyzed_signal[m:n], self.reference_signal[0:n-m])[0, 1]
+            # 右移 m 步
+            rou_R[m-1] = np.corrcoef(self.analyzed_signal[0:n-m], self.reference_signal[m:n])[0, 1]
+
+        # 找出左、右、中三个方向上的最佳候选者
+        pos_L = np.argmax(rou_L) + 1 if len(rou_L) > 0 else 0
+        max_L_corr = rou_L[pos_L - 1] if len(rou_L) > 0 else -np.inf
+        
+        pos_R = np.argmax(rou_R) + 1 if len(rou_R) > 0 else 0
+        max_R_corr = rou_R[pos_R - 1] if len(rou_R) > 0 else -np.inf
+
+        # 初始化最佳选择为不平移
+        best_corr = corr_orig
+        n_E = 0
+        is_left_shift = False # 标记最终方向
+
+        # --- 严格按ISO标准三层优先级进行决策 ---
+        # 1. 比较左移与当前最佳
+        if max_L_corr > best_corr:
+            best_corr = max_L_corr
+            n_E = pos_L
+            is_left_shift = True
+        elif max_L_corr == best_corr:
+            if pos_L < n_E: # 步数少者优先
+                n_E = pos_L
+                is_left_shift = True
+            # 如果步数也相等(只能是n_E=0时)，不处理，因为原始位置优先于有位移的位置
+
+        # 2. 比较右移与当前最佳 (此时最佳可能是原始或左移)
+        if max_R_corr > best_corr:
+            best_corr = max_R_corr
+            n_E = pos_R
+            is_left_shift = False
+        elif max_R_corr == best_corr:
+            if pos_R < n_E: # 步数少者优先
+                n_E = pos_R
+                is_left_shift = False
+            elif pos_R == n_E and not is_left_shift: # 步数也相等，且当前最佳不是左移
+                # 标准规定左移优先于右移，但这里当前最佳是右移，所以什么都不做
+                pass
+            elif pos_R == n_E and is_left_shift: # 步数也相等，且当前最佳是左移
+                # 标准规定左移优先于右移，所以什么都不做
+                pass
+
+        # 根据最终确定的 n_E 和方向，生成并存储移位后的曲线
+        if n_E == 0:
+            self._shifted_analyzed = self.analyzed_signal
+            self._shifted_reference = self.reference_signal
+        elif is_left_shift:
+            self._shifted_analyzed = self.analyzed_signal[n_E:n]
+            self._shifted_reference = self.reference_signal[0:n-n_E]
+        else: # Right shift
+            self._shifted_analyzed = self.analyzed_signal[0:n-n_E]
+            self._shifted_reference = self.reference_signal[n_E:n]
+
+        # 根据标准公式(6.12)计算分数
+        if n_E >= max_shift_steps:
+            return 0.0
         else:
-            ep = ((yupo * n - max_pos) / (yupo * n)) ** kp
-        return ep
+            return ((max_shift_steps - n_E) / max_shift_steps) ** exponent_factor
 
-    def _magnitude_score(self):
-        yupo=0.5
-        km=1
-        curve_shift=self.r_shift
-        f_shift=self.f_shift
-        dist, path = fastdtw(curve_shift, f_shift, dist=lambda x, y: abs(x - y))
+    def _calculate_magnitude_score(self):
+        """计算幅值分数 (EM)。非对称。"""
+        max_allowed_error = 0.5
+        exponent_factor = 1
         
-        sum_abs_real = np.sum(np.abs(curve_shift))
-        if sum_abs_real == 0: return 1.0 # 如果真实曲线全为0，认为幅值完全匹配
+        n_shifted = len(self._shifted_reference)
+        window_size = int(np.ceil(0.1 * n_shifted))
 
-        yupo_m = dist / sum_abs_real
-        if yupo_m >= yupo:
-            em = 0.0
+        alignment = dtw(self._shifted_reference, self._shifted_analyzed,
+                        dist_method='sqeuclidean',
+                        window_type='sakoechiba',
+                        window_args={'window_size': window_size})
+
+        ref_warped = self._shifted_reference[alignment.index1]
+        ana_warped = self._shifted_analyzed[alignment.index2]
+
+        epsilon = 1e-9
+        norm_diff = np.linalg.norm(ana_warped - ref_warped)
+        norm_ref = np.linalg.norm(ref_warped)
+        
+        magnitude_error = norm_diff / (norm_ref + epsilon)
+
+        if magnitude_error >= max_allowed_error:
+            return 0.0
         else:
-            em = ((yupo - yupo_m) / yupo) ** km
-        return em
+            return ((max_allowed_error - magnitude_error) / max_allowed_error) ** exponent_factor
 
-    def _slope_score(self):
-        yupo=2
-        ks=1
-        curve_shift=self.r_shift
-        f_shift=self.f_shift
-        n=len(curve_shift)
-        interval=10
-        if n <= interval: return 1.0 # 序列太短无法计算斜率
-
-        m = int(np.ceil((n - 1) / interval))
-        fake_slopes = np.zeros(m)
-        real_slopes = np.zeros(m)
+    def _calculate_slope_score(self):
+        """计算斜率分数 (Es)。非对称。"""
+        max_allowed_error = 2.0
+        exponent_factor = 1
         
-        for i in range(m - 1):
-            fake_slopes[i] = (f_shift[(i + 1) * interval] - f_shift[i * interval])
-            real_slopes[i] = (curve_shift[(i + 1) * interval] - curve_shift[i * interval])
-        
-        # 避免除以零
-        sum_abs_real = np.sum(np.abs(real_slopes))
-        if sum_abs_real == 0: return 1.0
+        T_ts = self._shifted_reference
+        C_ts = self._shifted_analyzed
+        n = len(T_ts)
 
-        yupo_s = np.sum(np.abs(fake_slopes - real_slopes)) / sum_abs_real
-        if yupo_s >= yupo:
-            es = 0.0
+        def calculate_raw_derivative(curve, dt):
+            if len(curve) < 2: return np.zeros_like(curve)
+            deriv = np.zeros_like(curve)
+            deriv[0] = (curve[1] - curve[0]) / dt
+            if len(curve) > 2: deriv[1:-1] = (curve[2:] - curve[:-2]) / (2 * dt)
+            deriv[-1] = (curve[-1] - curve[-2]) / dt
+            return deriv
+
+        def smooth_derivative(raw_deriv):
+            if len(raw_deriv) <= 2: return raw_deriv
+            smoothed = np.copy(raw_deriv)
+            if n >= 3:
+                smoothed[1] = np.mean(raw_deriv[0:3]); smoothed[-2] = np.mean(raw_deriv[-3:])
+            if n >= 5:
+                smoothed[2] = np.mean(raw_deriv[0:5]); smoothed[-3] = np.mean(raw_deriv[-5:])
+            if n >= 7:
+                smoothed[3] = np.mean(raw_deriv[0:7]); smoothed[-4] = np.mean(raw_deriv[-7:])
+            if n >= 9:
+                smoothed[4:-4] = np.convolve(raw_deriv, np.ones(9)/9, mode='valid')
+            return smoothed
+
+        T_d = smooth_derivative(calculate_raw_derivative(T_ts, self.dt))
+        C_d = smooth_derivative(calculate_raw_derivative(C_ts, self.dt))
+
+        epsilon = 1e-9
+        norm_diff = np.linalg.norm(C_d - T_d)
+        norm_ref = np.linalg.norm(T_d)
+        
+        slope_error = norm_diff / (norm_ref + epsilon)
+
+        if slope_error >= max_allowed_error:
+            return 0.0
         else:
-            es = ((yupo - yupo_s) / yupo) ** ks
-        return es
+            return ((max_allowed_error - slope_error) / max_allowed_error) ** exponent_factor
 
-    def rate(self):
-        wcora=0.4
-        wp=0.2
-        wm=0.2
-        ws=0.2
-        score = (wcora * self._cora() + 
-                 wp * self.phase_score_val + 
-                 wm * self._magnitude_score() + 
-                 ws * self._slope_score())
-        return score
-
-# ==========================================================================================
-# 对外暴露的Metric函数
-# ==========================================================================================
 
 def root_mean_squared_error(output, target):
     """
@@ -136,7 +258,7 @@ def root_mean_squared_error(output, target):
         loss = torch.sqrt(torch.mean((output - target)**2))
     return loss.item()
 
-def _calculate_iso_rating_for_channel(output, target, channel_idx):
+def _calculate_iso_rating_for_channel(output, target, channel_idx, dt=0.001):
     """
     内部帮助函数，用于计算指定通道的平均ISO-rating。
     """
@@ -155,25 +277,68 @@ def _calculate_iso_rating_for_channel(output, target, channel_idx):
             true_wave = true_waves[i, channel_idx, :]
             
             # 实例化并计算得分
-            iso_calculator = _ISO_ov(true_wave, pred_wave)
-            total_score += iso_calculator.rate()
+            iso_calculator = ISORating(true_wave, pred_wave, dt)
+            total_score += iso_calculator.calculate()
 
         return total_score / batch_size if batch_size > 0 else 0.0
 
-def iso_rating_x(output, target):
+def iso_rating_x(output, target, dt=0.001):
     """
     计算 X 方向波形的平均 ISO-rating。
     """
-    return _calculate_iso_rating_for_channel(output, target, channel_idx=0)
+    return _calculate_iso_rating_for_channel(output, target, channel_idx=0, dt=dt)
 
-def iso_rating_y(output, target):
+def iso_rating_y(output, target, dt=0.001):
     """
     计算 Y 方向波形的平均 ISO-rating。
     """
-    return _calculate_iso_rating_for_channel(output, target, channel_idx=1)
+    return _calculate_iso_rating_for_channel(output, target, channel_idx=1, dt=dt)
 
-def iso_rating_z(output, target):
+def iso_rating_z(output, target, dt=0.001):
     """
     计算 Z 方向波形的平均 ISO-rating。
     """
-    return _calculate_iso_rating_for_channel(output, target, channel_idx=2)
+    return _calculate_iso_rating_for_channel(output, target, channel_idx=2, dt=dt)
+
+if __name__ == "__main__":
+    # 测试代码
+    import pandas as pd
+    pulse1_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x1.csv', sep='\t', header=None, usecols=[1]).values
+    pulse2_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x2.csv', sep='\t', header=None, usecols=[1]).values
+    pulse3_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x3.csv', sep='\t', header=None, usecols=[1]).values
+    pulse4_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x4.csv', sep='\t', header=None, usecols=[1]).values
+    pulse5_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x5.csv', sep='\t', header=None, usecols=[1]).values
+    pulse6_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x6.csv', sep='\t', header=None, usecols=[1]).values
+
+    downsample_indices = np.arange(100, 20001, 100)
+
+    pulse1_np = pulse1_np[downsample_indices].squeeze()
+    pulse2_np = pulse2_np[downsample_indices].squeeze()
+    pulse3_np = pulse3_np[downsample_indices].squeeze()
+    pulse4_np = pulse4_np[downsample_indices].squeeze()
+    pulse5_np = pulse5_np[downsample_indices].squeeze()
+    pulse6_np = pulse6_np[downsample_indices].squeeze()
+
+    # 上述6个波形，计算出corridor，phase, magnitude, slope，isorating的分数矩阵（6*6）并打印
+    iso_scores = np.zeros((6, 6, 5))  # 6*6*5的矩阵，最后一维分别对应corridor, Phase, Magnitude, Slope, ISO-Rating
+
+    for i in range(6):
+        for j in range(6):
+            iso_calculator = ISORating(eval(f'pulse{i+1}_np'), eval(f'pulse{j+1}_np'))
+            iso_scores[i, j, 4] = iso_calculator.calculate()
+            iso_scores[i, j, 0] = iso_calculator.corridor_score
+            iso_scores[i, j, 1] = iso_calculator.phase_score
+            iso_scores[i, j, 2] = iso_calculator.magnitude_score
+            iso_scores[i, j, 3] = iso_calculator.slope_score
+
+    print("\n 终版版本:ISO-Rating Matrix:")
+    print(np.round(iso_scores[..., 4], 6))
+    # print("\n 终版版本:corridor_score Matrix:")
+    # print(np.round(iso_scores[..., 0], 6))
+    # print("\n 终版版本:Phase Score Matrix:")
+    # print(np.round(iso_scores[..., 1], 6))
+    # print("\n 终版版本:Magnitude Score Matrix:")
+    # print(np.round(iso_scores[..., 2], 6))
+    # print("\n 终版版本:Slope Score Matrix:")
+    # print(np.round(iso_scores[..., 3], 6))
+

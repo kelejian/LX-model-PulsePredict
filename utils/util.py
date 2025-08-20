@@ -13,12 +13,12 @@ def ensure_dir(dirname):
 
 def read_json(fname):
     fname = Path(fname)
-    with fname.open('rt') as handle:
+    with fname.open('rt', encoding='utf-8') as handle:
         return json.load(handle, object_hook=OrderedDict)
 
 def write_json(content, fname):
     fname = Path(fname)
-    with fname.open('wt') as handle:
+    with fname.open('wt', encoding='utf-8') as handle:
         json.dump(content, handle, indent=4, sort_keys=False)
 
 def inf_loop(data_loader):
@@ -146,12 +146,13 @@ class MetricTracker:
     def update(self, key, value, n=1):
         if self.writer is not None:
             self.writer.add_scalar(key, value)
-        self._data.total[key] += value * n
-        self._data.counts[key] += n
-        self._data.average[key] = self._data.total[key] / self._data.counts[key]
+        # 使用 loc 进行赋值，避免链式赋值警告
+        self._data.loc[key, 'total'] += value * n
+        self._data.loc[key, 'counts'] += n
+        self._data.loc[key, 'average'] = self._data.loc[key, 'total'] / self._data.loc[key, 'counts']
 
     def avg(self, key):
-        return self._data.average[key]
+        return self._data.loc[key, 'average']
 
     def result(self):
-        return dict(self._data.average)
+        return dict(self._data['average'])
