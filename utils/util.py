@@ -134,6 +134,66 @@ def inverse_transform(pred_tensor, target_tensor, scaler):
     target_orig = torch.from_numpy(target_orig).to(target_tensor.device)
     
     return pred_orig, target_orig
+class InputScaler:
+    def __init__(self, v_min=25, v_max=65, a_abs_max=60, o_abs_max=1):
+        '''
+        :param v_min: 速度的最小值
+        :param v_max: 速度的最大值
+        :param a_abs_max: 角度的绝对值最大值
+        :param o_abs_max: 重叠率的绝对值最大值
+        '''
+
+        self.v_min = v_min
+        self.v_max = v_max
+        self.a_abs_max = a_abs_max
+        self.o_abs_max = o_abs_max
+
+    def transform(self, velocity, angle, overlap):
+        norm_velocity = (velocity - self.v_min) / (self.v_max - self.v_min) # 归一化到[0, 1]
+        norm_angle = angle / self.a_abs_max  # 归一化到[-1, 1]
+        norm_overlap = overlap / self.o_abs_max  # 归一化到[-1, 1]
+        return norm_velocity, norm_angle, norm_overlap
+
+    def inverse_transform(self, norm_velocity, norm_angle, norm_overlap):
+        velocity = norm_velocity * (self.v_max - self.v_min) + self.v_min
+        angle = norm_angle * self.a_abs_max
+        overlap = norm_overlap * self.o_abs_max
+        return velocity, angle, overlap
+class PulseAbsMaxScaler:
+    """
+    一个自定义的Scaler，执行 x / max(abs(x)) 的归一化。
+    它的接口模仿了sklearn的scaler，以便于替换。
+    """
+    def __init__(self):
+        self.data_abs_max_ = None
+
+    def fit(self, data):
+        """
+        计算并存储数据中的绝对值最大值。
+        :param data: 一个Numpy数组。
+        """
+        self.data_abs_max_ = np.max(np.abs(data))
+        return self
+
+    def transform(self, data):
+        """
+        使用存储的绝对值最大值对数据进行归一化。
+        :param data: 一个Numpy数组。
+        """
+        if self.data_abs_max_ is None:
+            raise RuntimeError("Scaler has not been fitted yet. Call a.fit(data) first.")
+        if self.data_abs_max_ == 0:
+            return data # 避免除以零
+        return data / self.data_abs_max_
+
+    def inverse_transform(self, data):
+        """
+        进行反归一化操作。
+        :param data: 一个归一化后的Numpy数组。
+        """
+        if self.data_abs_max_ is None:
+            raise RuntimeError("Scaler has not been fitted yet. Call a.fit(data) first.")
+        return data * self.data_abs_max_
 
 
 def plot_waveform_comparison(pred_wave, true_wave, params, case_id, epoch, batch_idx, sample_idx, save_dir):

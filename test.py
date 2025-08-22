@@ -8,7 +8,7 @@ import model.loss as module_loss
 import model.metric as module_metric
 import model.model as module_arch
 from parse_config import ConfigParser
-from utils import inverse_transform, plot_waveform_comparison
+from utils import inverse_transform, plot_waveform_comparison, InputScaler
 
 def main(config):
     logger = config.get_logger('test')
@@ -75,10 +75,8 @@ def main(config):
                     normalized_params = data[j].cpu().numpy()
                     norm_vel, norm_ang, norm_ov = normalized_params[0], normalized_params[1], normalized_params[2]
                     
-                    # 根据 data_loaders.py 中的归一化公式推出的反算公式
-                    raw_vel = norm_vel * (65 - 25) + 25  # 速度反算
-                    raw_ang = norm_ang * 60             # 角度反算
-                    raw_ov = norm_ov * 1                # 重叠率反算
+                    input_scaler = getattr(data_loader.dataset, 'input_scaler', InputScaler(v_min=25, v_max=65, a_abs_max=60, o_abs_max=1))
+                    raw_vel, raw_ang, raw_ov = input_scaler.inverse_transform(norm_vel, norm_ang, norm_ov)
 
                     collision_params = {'vel': raw_vel, 'ang': raw_ang, 'ov': raw_ov}
                     # -----------------------------------------

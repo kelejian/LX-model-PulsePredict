@@ -5,45 +5,8 @@ import pandas as pd
 from torch.utils.data import Dataset
 from base import BaseDataLoader # 继承自项目基类
 from sklearn.preprocessing import MinMaxScaler
+from utils import InputScaler, PulseAbsMaxScaler
 
-# ==========================================================================================
-# 自定义的 Scaler 类
-# ==========================================================================================
-class CustomAbsMaxScaler:
-    """
-    一个自定义的Scaler，执行 x / max(abs(x)) 的归一化。
-    它的接口模仿了sklearn的scaler，以便于替换。
-    """
-    def __init__(self):
-        self.data_abs_max_ = None
-
-    def fit(self, data):
-        """
-        计算并存储数据中的绝对值最大值。
-        :param data: 一个Numpy数组。
-        """
-        self.data_abs_max_ = np.max(np.abs(data))
-        return self
-
-    def transform(self, data):
-        """
-        使用存储的绝对值最大值对数据进行归一化。
-        :param data: 一个Numpy数组。
-        """
-        if self.data_abs_max_ is None:
-            raise RuntimeError("Scaler has not been fitted yet. Call a.fit(data) first.")
-        if self.data_abs_max_ == 0:
-            return data # 避免除以零
-        return data / self.data_abs_max_
-
-    def inverse_transform(self, data):
-        """
-        进行反归一化操作。
-        :param data: 一个归一化后的Numpy数组。
-        """
-        if self.data_abs_max_ is None:
-            raise RuntimeError("Scaler has not been fitted yet. Call a.fit(data) first.")
-        return data * self.data_abs_max_
 
 #==========================================================================================
 # 定制的 Dataset 类来处理碰撞数据
@@ -69,19 +32,15 @@ class CollisionDataset(Dataset):
         all_params = np.load(params_npz_path)
         case_indices = self.case_ids - 1 # 将 case_ids 转换为0基索引
 
-        v_min, v_max = 25, 65
+        input_scaler = InputScaler(v_min=25, v_max=65, a_abs_max=60, o_abs_max=1)
+        
         raw_velocities = all_params['impact_velocity'][case_indices]
-        norm_velocities = (raw_velocities - v_min) / (v_max - v_min) # 归一化到[0, 1]
-
-        a_min, a_max = -60, 60
         raw_angles = all_params['impact_angle'][case_indices]
-        #norm_angles = ((raw_angles - a_min) / (a_max - a_min)) - 0.5 # 归一化到[-0.5, 0.5]
-        norm_angles = raw_angles / a_max # 归一化到[-1, 1]
-
-        o_min, o_max = -1, 1
         raw_overlaps = all_params['overlap'][case_indices]
-        #norm_overlaps = ((raw_overlaps - o_min) / (o_max - o_min)) - 0.5 # 归一化到[-0.5, 0.5]
-        norm_overlaps = raw_overlaps / o_max # 归一化到[-1, 1]
+
+        norm_velocities, norm_angles, norm_overlaps = input_scaler.transform(
+            raw_velocities, raw_angles, raw_overlaps
+        ) # 分别归一化到[0, 1]，[-1, 1]，[-1,1]
 
         self.features = torch.tensor(
             np.stack([norm_velocities, norm_angles, norm_overlaps], axis=1),
@@ -164,8 +123,8 @@ class CollisionDataLoader(BaseDataLoader):
                     print(f"MinMaxScaler 拟合完毕。Min: {target_scaler.data_min_[0]:.4f}, Max: {target_scaler.data_max_[0]:.4f}")
                 
                 elif pulse_norm_mode == 'absmax':
-                    target_scaler = CustomAbsMaxScaler().fit(full_dataset_np)
-                    print(f"CustomAbsMaxScaler 拟合完毕。全局绝对值Max: {target_scaler.data_abs_max_:.4f}")
+                    target_scaler = PulseAbsMaxScaler().fit(full_dataset_np)
+                    print(f"PulseAbsMaxScaler 拟合完毕。全局绝对值Max: {target_scaler.data_abs_max_:.4f}")
                 else:
                     raise ValueError(f"未知的 pulse_norm_mode: {pulse_norm_mode}")
                 
