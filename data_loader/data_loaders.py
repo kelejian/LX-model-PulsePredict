@@ -1,91 +1,82 @@
 import os
 import torch
 import numpy as np
-import pandas as pd
+import joblib
 from torch.utils.data import Dataset
 from base import BaseDataLoader # 继承自项目基类
 from sklearn.preprocessing import MinMaxScaler
 from utils import InputScaler, PulseAbsMaxScaler
 
-
 #==========================================================================================
-# 定制的 Dataset 类来处理碰撞数据
+# 定制的 Dataset 类
 #==========================================================================================
 class CollisionDataset(Dataset):
     """
-    用于加载碰撞波形数据的自定义数据集。
-    【版本说明】: 此版本直接读取由 utils.data_utils.py 预处理和打包后的 .npz 文件，并加载其中所有案例。
+    用于加载已打包的碰撞数据的自定义数据集。
+    【版本说明】: 此版本直接读取由新的 data_prepare 脚本打包后的单个 .npz 文件。
     """
-    def __init__(self, params_npz_path, processed_pulses_path, target_scaler=None):
+    def __init__(self, packaged_data_path, target_scaler=None):
         """
-        :param params_npz_path: 包含所有工况参数的 npz 文件路径。
-        :param processed_pulses_path: 包含预处理后波形数据的 .npz 文件路径。
+        :param packaged_data_path: 包含已打包的 case_id, params, waveforms 的 .npz 文件路径。
         :param target_scaler: 可选的目标缩放器，用于对波形进行缩放。
         """
         self.target_scaler = target_scaler
 
-        # 加载预处理后的波形数据，并从中获取所有原始 case_id
-        self.pulses_data = np.load(processed_pulses_path)
-        self.case_ids = np.array(sorted([int(k) for k in self.pulses_data.keys()]))
-        
-        # 加载并处理与 self.case_ids 对应的工况参数
-        all_params = np.load(params_npz_path)
-        case_indices = self.case_ids - 1 # 将 case_ids 转换为0基索引
+        # --- 1. 加载打包好的数据 ---
+        data = np.load(packaged_data_path)
+        self.case_ids = data['case_ids']
+        raw_params = data['params']         # 原始物理尺度的参数
+        raw_waveforms = data['waveforms']   # 原始物理尺度的波形
 
-        input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1)
-
-        raw_velocities = all_params['impact_velocity'][case_indices]
-        raw_angles = all_params['impact_angle'][case_indices]
-        raw_overlaps = all_params['overlap'][case_indices]
-
-        norm_velocities, norm_angles, norm_overlaps = input_scaler.transform(
-            raw_velocities, raw_angles, raw_overlaps
-        ) # 分别归一化到[0, 1]，[-1, 1]，[-1,1]
-
+        # --- 2. 归一化输入参数 ---
+        # 注意：这里的 InputScaler 实例作为属性保存，以便在 test.py 中可以调用它进行逆变换
+        self.input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1)
+        norm_velocities, norm_angles, norm_overlaps = self.input_scaler.transform(
+            raw_params[:, 0], raw_params[:, 1], raw_params[:, 2]
+        )
         self.features = torch.tensor(
             np.stack([norm_velocities, norm_angles, norm_overlaps], axis=1),
             dtype=torch.float32
-        ) # 形状 (N, 3)，N为样本数
+        ) # 形状 (N, 3)
+
+        # --- 3. （可选）归一化输出波形 ---
+        if self.target_scaler:
+            original_shape = raw_waveforms.shape
+            # (N, 3, 200) -> (N * 3 * 200, 1)
+            waveforms_reshaped = raw_waveforms.reshape(-1, 1)
+            waveforms_scaled = self.target_scaler.transform(waveforms_reshaped)
+            # (N * 3 * 200, 1) -> (N, 3, 200)
+            waveforms_np = waveforms_scaled.reshape(original_shape)
+        else:
+            waveforms_np = raw_waveforms
+        
+        self.waveforms = torch.tensor(waveforms_np, dtype=torch.float32)
 
     def __len__(self):
-        """
-        返回数据集中样本的总数
-        """
         return len(self.case_ids)
 
     def __getitem__(self, idx):
         """
         根据索引 idx 获取一个样本。
+        返回顺序为 (特征, 目标波形, 案例ID)，与 Trainer 逻辑保持一致。
         """
         input_features = self.features[idx]
+        target_waveforms = self.waveforms[idx]
         case_id = self.case_ids[idx]
         
-        # 从已加载的数据中直接获取波形
-        waveforms_np = self.pulses_data[str(case_id)] # 形状 (3, 200)
-
-        if self.target_scaler is not None: # 如果提供了目标缩放器，则对波形进行缩放
-            original_shape = waveforms_np.shape
-            waveforms_reshaped = waveforms_np.reshape(-1, 1)
-            waveforms_scaled = self.target_scaler.transform(waveforms_reshaped)
-            waveforms_np = waveforms_scaled.reshape(original_shape)
-            
-        target_waveforms = torch.tensor(waveforms_np, dtype=torch.float32)
-
-        return input_features, target_waveforms, case_id # 返回特征和波形数据，及其原始case_id
+        return input_features, target_waveforms, case_id
 
 #==========================================================================================
 #  DataLoader 类
 #==========================================================================================
-import joblib # 导入 joblib 用于保存和加载 scaler
 class CollisionDataLoader(BaseDataLoader):
     """
     用于加载碰撞波形数据的 DataLoader 类。
-    【版本说明】: 此版本实现了在训练时拟合并保存Scaler，在测试时加载Scaler的功能。
+    【版本说明】: 此版本适配单一数据源文件，简化了初始化和Scaler处理逻辑。
     """
-    def __init__(self, params_npz_path, processed_pulses_path, batch_size, pulse_norm_mode='none', scaler_path=None, shuffle=True, validation_split=0.1, num_workers=1, training=True):
+    def __init__(self, packaged_data_path, batch_size, pulse_norm_mode='none', scaler_path=None, shuffle=True, validation_split=0.1, num_workers=0, training=True):
         """
-        :param params_npz_path: 包含所有工况参数的 npz 文件路径。
-        :param processed_pulses_path: 要加载的预处理波形数据文件路径.
+        :param packaged_data_path: 包含打包数据的 .npz 文件路径。
         :param batch_size: 批量大小。
         :param pulse_norm_mode: 归一化模式，'none', 'minmax', 'absmax'之一。
         :param scaler_path: 保存或加载Scaler的文件路径 (e.g., 'saved/scalers/pulse_scaler.joblib')。
@@ -94,10 +85,8 @@ class CollisionDataLoader(BaseDataLoader):
         :param num_workers: 数据加载的工作线程数。
         :param training: 是否为训练模式。这会影响Scaler的加载/保存行为。
         """
-        if not os.path.exists(params_npz_path):
-            raise FileNotFoundError(f"工况参数文件未找到: {params_npz_path}。")
-        if not os.path.exists(processed_pulses_path):
-             raise FileNotFoundError(f"预处理波形文件未找到: {processed_pulses_path}。")
+        if not os.path.exists(packaged_data_path):
+            raise FileNotFoundError(f"打包好的数据文件未找到: {packaged_data_path}。")
 
         target_scaler = None
         # --- Scaler 处理 ---
@@ -107,23 +96,22 @@ class CollisionDataLoader(BaseDataLoader):
 
             # 如果是训练模式，则拟合并保存Scaler
             if training:
-                print(f"训练模式：正在为目标波形拟合Scaler (模式: {pulse_norm_mode})...")
+                print(f"训练模式：正在从 '{packaged_data_path}' 为目标波形拟合Scaler (模式: {pulse_norm_mode})...")
                 
-                with np.load(processed_pulses_path) as data:
-                    all_waveforms_data = [data[key] for key in data.keys()]
+                # 直接从打包文件中加载波形数据进行拟合
+                with np.load(packaged_data_path) as data:
+                    all_waveforms_data = data['waveforms']
                 
-                if not all_waveforms_data: 
-                    raise ValueError(f"未能从 {processed_pulses_path} 加载任何波形数据。")
+                if all_waveforms_data.size == 0: 
+                    raise ValueError(f"未能从 {packaged_data_path} 加载任何波形数据。")
                 
-                full_dataset_np = np.concatenate(all_waveforms_data, axis=0)
-
                 if pulse_norm_mode == 'minmax':
                     scaler = MinMaxScaler(feature_range=(-1, 1))
-                    target_scaler = scaler.fit(full_dataset_np.reshape(-1, 1))
+                    target_scaler = scaler.fit(all_waveforms_data.reshape(-1, 1))
                     print(f"MinMaxScaler 拟合完毕。Min: {target_scaler.data_min_[0]:.4f}, Max: {target_scaler.data_max_[0]:.4f}")
                 
                 elif pulse_norm_mode == 'absmax':
-                    target_scaler = PulseAbsMaxScaler().fit(full_dataset_np)
+                    target_scaler = PulseAbsMaxScaler().fit(all_waveforms_data)
                     print(f"PulseAbsMaxScaler 拟合完毕。全局绝对值Max: {target_scaler.data_abs_max_:.4f}")
                 else:
                     raise ValueError(f"未知的 pulse_norm_mode: {pulse_norm_mode}")
@@ -148,7 +136,7 @@ class CollisionDataLoader(BaseDataLoader):
             validation_split = 0.0
 
         # --- 实例化Dataset ---
-        self.dataset = CollisionDataset(params_npz_path, processed_pulses_path, target_scaler)
+        self.dataset = CollisionDataset(packaged_data_path, target_scaler)
         
         # 保存一些有用的属性
         self.pulse_norm_mode = pulse_norm_mode

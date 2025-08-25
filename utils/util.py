@@ -167,7 +167,7 @@ class PulseAbsMaxScaler:
     def __init__(self):
         self.data_abs_max_ = None
 
-    def fit(self, data, num=20):
+    def fit(self, data, num=50):
         """
         计算并存储数据中的绝对值最大的 num 个值的平均值。
         :param data: 一个Numpy数组。

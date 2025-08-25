@@ -3,36 +3,58 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-def process_and_save_pulses(pulse_dir, case_id_list, output_path, downsample_indices=None):
+def package_pulse_data(pulse_dir, params_path, case_id_list, output_path, downsample_indices=None):
     """
-    处理、降采样并打包指定案例的碰撞波形数据。
+    处理、降采样并将指定案例的输入参数和输出波形数据打包在一起。
 
-    该函数会读取给定 case_id 列表对应的 x, y, z 三个方向的原始波形CSV文件，
-    进行降采样，然后将所有数据打包保存到一个 .npz 文件中，以便于高效读取。
+    该函数会读取工况参数文件，并根据给定的 case_id 列表，匹配对应的
+    原始波形CSV文件。然后将输入参数、输出波形和 case_id 作为一个整体
+    保存到一个结构化的 .npz 文件中。
 
     :param pulse_dir: 存放原始波形CSV文件的目录。
+    :param params_path: 包含所有工况参数的 .npz 文件路径 (需包含 'case_id' 列)。
     :param case_id_list: 需要处理的案例ID列表。
     :param output_path: 打包后的 .npz 文件保存路径。
-    :param downsample_indices: 用于降采样的索引数组。如果为None，则默认从20001个点中抽取200个点。
+    :param downsample_indices: 用于降采样的索引数组。如果为None，则默认抽取200个点。
     """
     if downsample_indices is None:
         downsample_indices = np.arange(100, 20001, 100)
 
+    # --- 1. 加载并索引工况参数 ---
+    try:
+        all_params_data = np.load(params_path)
+        # 使用 pandas DataFrame以便于通过 case_id 高效查找
+        params_df = pd.DataFrame({
+            'case_id': all_params_data['case_id'],
+            'impact_velocity': all_params_data['impact_velocity'],
+            'impact_angle': all_params_data['impact_angle'],
+            'overlap': all_params_data['overlap']
+        }).set_index('case_id')
+    except Exception as e:
+        print(f"错误：加载或处理工况参数文件 '{params_path}' 时出错: {e}")
+        return
+
     if not os.path.exists(os.path.dirname(output_path)):
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    processed_data = {}
+    # 用于存储最终数据的列表
+    processed_case_ids = []
+    processed_params = []
+    processed_waveforms = []
 
-    successful_cases = []
-
-    print(f"开始处理 {len(case_id_list)} 个案例的波形数据...")
-    for case_id in tqdm(case_id_list, desc="Processing Crash Pulses"):
+    print(f"开始处理 {len(case_id_list)} 个案例，将输入和输出打包在一起...")
+    for case_id in tqdm(case_id_list, desc="Packaging pulse Data"):
         try:
+            # --- 2. 确认参数存在 ---
+            if case_id not in params_df.index:
+                print(f"警告：在参数文件中未找到案例 {case_id}，已跳过。")
+                continue
+
+            # --- 3. 读取并处理波形 ---
             x_path = os.path.join(pulse_dir, f'x{case_id}.csv')
             y_path = os.path.join(pulse_dir, f'y{case_id}.csv')
             z_path = os.path.join(pulse_dir, f'z{case_id}.csv')
 
-            # 确认三个方向的波形文件都存在
             if not all(os.path.exists(p) for p in [x_path, y_path, z_path]):
                 print(f"警告：案例 {case_id} 的波形文件不完整，已跳过。")
                 continue
@@ -41,49 +63,76 @@ def process_and_save_pulses(pulse_dir, case_id_list, output_path, downsample_ind
             ay_full = pd.read_csv(y_path, sep='\t', header=None, usecols=[1]).values
             az_full = pd.read_csv(z_path, sep='\t', header=None, usecols=[1]).values
 
-            # 使用预定义的采样索引进行降采样
             ax_sampled = ax_full[downsample_indices]
             ay_sampled = ay_full[downsample_indices]
             az_sampled = az_full[downsample_indices]
-
-            # 将三个轴的波形数据堆叠
+            
             waveforms_np = np.stack([ax_sampled, ay_sampled, az_sampled]).squeeze() # 形状 (3, 200)
 
-            # 以 case_id 为键，存储处理后的波形数据
-            processed_data[str(case_id)] = waveforms_np
+            # --- 4. 提取匹配的参数 ---
+            params_row = params_df.loc[case_id]
+            params_np = np.array([
+                params_row['impact_velocity'],
+                params_row['impact_angle'],
+                params_row['overlap']
+            ], dtype=np.float32) # 形状 (3,)
 
-            successful_cases.append(case_id)
+            # --- 5. 添加到结果列表 ---
+            processed_case_ids.append(case_id)
+            processed_params.append(params_np)
+            processed_waveforms.append(waveforms_np)
 
-        except FileNotFoundError:
-            print(f"警告：读取案例 {case_id} 文件时出错，已跳过。")
+        except Exception as e:
+            print(f"警告：处理案例 {case_id} 时发生错误 '{e}'，已跳过。")
             continue
+            
+    if not processed_case_ids:
+        print("错误：没有成功处理任何数据，未生成输出文件。")
+        return
 
-    # 保存到 .npz 文件
-    np.savez(output_path, **processed_data)
-    print(f"数据处理完成，已保存至 {output_path}")
-    print(f"成功处理的数据数目：{len(successful_cases)}")
+    # --- 6. 将数据列表转换为Numpy数组并保存 ---
+    final_case_ids = np.array(processed_case_ids, dtype=int) # 形状 (N,)
+    final_params = np.stack(processed_params, axis=0) # 形状 (N, 3)
+    final_waveforms = np.stack(processed_waveforms, axis=0) # 形状 (N, 3, 200)
+
+    np.savez(
+        output_path,
+        case_ids=final_case_ids,
+        params=final_params,
+        waveforms=final_waveforms
+    )
+    print(f"数据打包完成，已保存至 {output_path}")
+    print(f"成功处理并打包的数据数目：{len(final_case_ids)}")
+    print(f"打包后文件内容: case_ids shape={final_case_ids.shape}, params shape={final_params.shape}, waveforms shape={final_waveforms.shape}")
+
 
 if __name__ == '__main__':
-    # 定义数据目录和案例ID
-    pulse_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\data' 
-    output_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\data'
+    # --- 使用示例 ---
+    pulse_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\acceleration_data_all1800'
+    # 假设您的参数文件现在也包含 case_id
+    params_path = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\distribution_0825_final.npz'
+    output_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关'
     
-    # 分别为训练阶段和测试阶段定义案例ID列表
-    num_train = 1800*0.8
-    num_test = 1800*0.2
-    # 从1-1800中分别随机取训练案例ID和测试案例ID，且不能重复
-    all_case_ids = set(range(1, 1801))
-    train_case_ids = set(np.random.choice(list(all_case_ids), size=int(num_train), replace=False))
-    test_case_ids = all_case_ids - train_case_ids
+    # 分割训练集和测试集
+    all_case_ids = np.load(params_path)['case_id']
+    np.random.shuffle(all_case_ids)
+    num_train = int(len(all_case_ids) / 6 * 5)
+    train_case_ids = all_case_ids[:num_train]
+    test_case_ids = all_case_ids[num_train:]
 
-    # 调用函数进行处理和保存
-    process_and_save_pulses(
+    # 为训练集打包数据
+    print("\n打包训练集数据...")
+    package_pulse_data(
         pulse_dir=pulse_dir,
+        params_path=params_path,
         case_id_list=train_case_ids,
-        output_path=os.path.join(output_dir, 'processed_pulses_train.npz')
+        output_path=os.path.join(output_dir, 'packaged_data_train.npz')
     )
-    process_and_save_pulses(
+    # 为测试集打包数据
+    print("\n打包测试集数据...")
+    package_pulse_data(
         pulse_dir=pulse_dir,
+        params_path=params_path,
         case_id_list=test_case_ids,
-        output_path=os.path.join(output_dir, 'processed_pulses_test.npz')
+        output_path=os.path.join(output_dir, 'packaged_data_test.npz')
     )

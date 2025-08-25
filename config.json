@@ -12,8 +12,7 @@
     "data_loader_train": {
         "type": "CollisionDataLoader",
         "args": {
-            "params_npz_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\distribution_0811.npz",
-            "processed_pulses_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\data\\processed_pulses_train.npz",
+            "packaged_data_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\packaged_data_train.npz",
             "batch_size": 256,
             "shuffle": true,
             "validation_split": 0,
@@ -26,8 +25,7 @@
     "data_loader_test": {
         "type": "CollisionDataLoader",
         "args": {
-            "params_npz_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\distribution_0811.npz",
-            "processed_pulses_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\data\\processed_pulses_test.npz",
+            "packaged_data_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\packaged_data_test.npz",
             "batch_size": 256,
             "shuffle": false,
             "validation_split": 0,
@@ -62,12 +60,12 @@
     "lr_scheduler": {
         "type": "StepLR",
         "args": {
-            "step_size": 50,
+            "step_size": 20,
             "gamma": 0.1
         }
     },
     "trainer": {
-        "epochs": 200,
+        "epochs": 100,
         "save_dir": "saved/",
         "save_period": 10,
         "verbosity": 2,
