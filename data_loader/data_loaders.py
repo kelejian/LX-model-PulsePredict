@@ -32,8 +32,8 @@ class CollisionDataset(Dataset):
         all_params = np.load(params_npz_path)
         case_indices = self.case_ids - 1 # 将 case_ids 转换为0基索引
 
-        input_scaler = InputScaler(v_min=25, v_max=65, a_abs_max=60, o_abs_max=1)
-        
+        input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1)
+
         raw_velocities = all_params['impact_velocity'][case_indices]
         raw_angles = all_params['impact_angle'][case_indices]
         raw_overlaps = all_params['overlap'][case_indices]

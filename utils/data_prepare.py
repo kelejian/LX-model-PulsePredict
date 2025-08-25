@@ -3,14 +3,14 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-def process_and_save_pulses(waveform_dir, case_id_list, output_path, downsample_indices=None):
+def process_and_save_pulses(pulse_dir, case_id_list, output_path, downsample_indices=None):
     """
     处理、降采样并打包指定案例的碰撞波形数据。
 
     该函数会读取给定 case_id 列表对应的 x, y, z 三个方向的原始波形CSV文件，
     进行降采样，然后将所有数据打包保存到一个 .npz 文件中，以便于高效读取。
 
-    :param waveform_dir: 存放原始波形CSV文件的目录。
+    :param pulse_dir: 存放原始波形CSV文件的目录。
     :param case_id_list: 需要处理的案例ID列表。
     :param output_path: 打包后的 .npz 文件保存路径。
     :param downsample_indices: 用于降采样的索引数组。如果为None，则默认从20001个点中抽取200个点。
@@ -28,9 +28,9 @@ def process_and_save_pulses(waveform_dir, case_id_list, output_path, downsample_
     print(f"开始处理 {len(case_id_list)} 个案例的波形数据...")
     for case_id in tqdm(case_id_list, desc="Processing Crash Pulses"):
         try:
-            x_path = os.path.join(waveform_dir, f'x{case_id}.csv')
-            y_path = os.path.join(waveform_dir, f'y{case_id}.csv')
-            z_path = os.path.join(waveform_dir, f'z{case_id}.csv')
+            x_path = os.path.join(pulse_dir, f'x{case_id}.csv')
+            y_path = os.path.join(pulse_dir, f'y{case_id}.csv')
+            z_path = os.path.join(pulse_dir, f'z{case_id}.csv')
 
             # 确认三个方向的波形文件都存在
             if not all(os.path.exists(p) for p in [x_path, y_path, z_path]):
@@ -64,8 +64,8 @@ def process_and_save_pulses(waveform_dir, case_id_list, output_path, downsample_
     print(f"成功处理的数据数目：{len(successful_cases)}")
 
 if __name__ == '__main__':
-    # 定义你的数据目录和案例ID
-    waveform_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\data' 
+    # 定义数据目录和案例ID
+    pulse_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\data' 
     output_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\data'
     
     # 分别为训练阶段和测试阶段定义案例ID列表
@@ -78,12 +78,12 @@ if __name__ == '__main__':
 
     # 调用函数进行处理和保存
     process_and_save_pulses(
-        waveform_dir=waveform_dir,
+        pulse_dir=pulse_dir,
         case_id_list=train_case_ids,
         output_path=os.path.join(output_dir, 'processed_pulses_train.npz')
     )
     process_and_save_pulses(
-        waveform_dir=waveform_dir,
+        pulse_dir=pulse_dir,
         case_id_list=test_case_ids,
         output_path=os.path.join(output_dir, 'processed_pulses_test.npz')
     )

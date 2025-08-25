@@ -75,7 +75,7 @@ def main(config):
                     normalized_params = data[j].cpu().numpy()
                     norm_vel, norm_ang, norm_ov = normalized_params[0], normalized_params[1], normalized_params[2]
                     
-                    input_scaler = getattr(data_loader.dataset, 'input_scaler', InputScaler(v_min=25, v_max=65, a_abs_max=60, o_abs_max=1))
+                    input_scaler = getattr(data_loader.dataset, 'input_scaler', InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1))
                     raw_vel, raw_ang, raw_ov = input_scaler.inverse_transform(norm_vel, norm_ang, norm_ov)
 
                     collision_params = {'vel': raw_vel, 'ang': raw_ang, 'ov': raw_ov}
