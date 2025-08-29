@@ -9,6 +9,7 @@ import model.metric as module_metric
 import model.model as module_arch
 from parse_config import ConfigParser
 from utils import inverse_transform, plot_waveform_comparison, InputScaler
+import torch.nn.functional as F
 
 def main(config):
     logger = config.get_logger('test')
@@ -46,19 +47,32 @@ def main(config):
     scaler = getattr(data_loader, 'target_scaler', None) # 获取数据集中的scaler属性，如果有的话
 
     with torch.no_grad():
-        for i, (data, target, case_ids) in enumerate(tqdm(data_loader)):
+        for batch_idx, (data, target, case_ids) in enumerate(tqdm(data_loader)):
             data, target = data.to(device), target.to(device)
             # -----------------------ADJUST-------------------------------
-            # output = model(data)
-            # loss = loss_fn(output, target)
-            # (在归一化尺度上)计算loss
-            pred_mean, pred_var = model(data)
-            loss = loss_fn(pred_mean, target, pred_var)
+            # 在归一化后的尺度上计算loss
+            # pred_mean, pred_var = model(data)
+            # loss = loss_fn(pred_mean, target, pred_var)
+
+            pred_mean_list, pred_var_list = model(data)
+            target_list = [F.interpolate(target, size=pred_mean.shape[-1], mode='linear', align_corners=False) for pred_mean in pred_mean_list]
+            target_list[-1] = target
+
+            loss_list = []
+            _lamda = 2.0
+            loss_weights = [] # 从1开始的等比数列，等比因子为_lamda
+            for j in range(len(pred_mean_list)):
+                loss = loss_fn(pred_mean_list[j], target_list[j], pred_var_list[j]) # GaussianNLLloss
+                loss_list.append(loss)
+                loss_weights.append(_lamda ** j)
+
+            loss = sum(w * l for w, l in zip(loss_weights, loss_list)) / sum(loss_weights)
             # ------------------------------------------------------------
             batch_size = data.shape[0]
             total_loss += loss.item() * batch_size
             # 计算指标前，先对数据进行逆变换，如果没有scaler，则返回原始张量
-            pred_mean_orig, target_orig = inverse_transform(pred_mean, target, scaler)
+            # pred_mean_orig, target_orig = inverse_transform(pred_mean, target, scaler)
+            pred_mean_orig, target_orig = inverse_transform(pred_mean_list[-1], target, scaler)
             # 在原始尺度上计算指标
             # for i, metric in enumerate(metric_fns):
             #     total_metrics[i] += metric(output, target) * batch_size
@@ -66,10 +80,10 @@ def main(config):
                 metric_name = met.__name__
                 total_metrics[metric_name] += met(pred_mean_orig, target_orig) * batch_size
             # ------------------------------画图----------------------------------
-            # 只对第一个批次 (i == 0) 进行绘图
-            if i == 0:
-                num_samples_to_plot = min(10, batch_size)
-                
+            # 只对第一个批次 (batch_idx == 0) 进行绘图
+            if batch_idx == 0:
+                num_samples_to_plot = min(40, batch_size)
+                print("\nPlotting samples...")
                 for j in range(num_samples_to_plot):
                     # --- 从归一化输入中反算出原始工况参数 ---
                     normalized_params = data[j].cpu().numpy()
@@ -91,7 +105,7 @@ def main(config):
                         params=collision_params,
                         case_id=sample_case_id,
                         epoch='test',
-                        batch_idx=i,
+                        batch_idx=batch_idx,
                         sample_idx=j,
                         save_dir=config.save_dir
                     )

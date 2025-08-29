@@ -12,7 +12,7 @@ def package_pulse_data(pulse_dir, params_path, case_id_list, output_path, downsa
     保存到一个结构化的 .npz 文件中。
 
     :param pulse_dir: 存放原始波形CSV文件的目录。
-    :param params_path: 包含所有工况参数的 .npz 文件路径 (需包含 'case_id' 列)。
+    :param params_path: 包含所有工况参数的 .npz 文件路径 (包含 'case_id' 列)。
     :param case_id_list: 需要处理的案例ID列表。
     :param output_path: 打包后的 .npz 文件保存路径。
     :param downsample_indices: 用于降采样的索引数组。如果为None，则默认抽取200个点。
@@ -107,9 +107,7 @@ def package_pulse_data(pulse_dir, params_path, case_id_list, output_path, downsa
 
 
 if __name__ == '__main__':
-    # --- 使用示例 ---
     pulse_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\acceleration_data_all1800'
-    # 假设您的参数文件现在也包含 case_id
     params_path = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\distribution_0825_final.npz'
     output_dir = r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关'
     
@@ -120,7 +118,7 @@ if __name__ == '__main__':
     train_case_ids = all_case_ids[:num_train]
     test_case_ids = all_case_ids[num_train:]
 
-    # 为训练集打包数据
+
     print("\n打包训练集数据...")
     package_pulse_data(
         pulse_dir=pulse_dir,
@@ -128,7 +126,7 @@ if __name__ == '__main__':
         case_id_list=train_case_ids,
         output_path=os.path.join(output_dir, 'packaged_data_train.npz')
     )
-    # 为测试集打包数据
+
     print("\n打包测试集数据...")
     package_pulse_data(
         pulse_dir=pulse_dir,

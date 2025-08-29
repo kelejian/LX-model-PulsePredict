@@ -3,7 +3,7 @@ import torch
 from torchvision.utils import make_grid
 from base import BaseTrainer
 from utils import inf_loop, MetricTracker, inverse_transform
-
+import torch.nn.functional as F
 
 class Trainer(BaseTrainer):
     """
@@ -132,3 +132,134 @@ class Trainer(BaseTrainer):
             current = batch_idx
             total = self.len_epoch
         return base.format(current, total, 100.0 * current / total)
+
+class Trainer_MLP(Trainer):
+    """
+    Trainer class for MLP models.
+    """
+    def __init__(self, model, criterion, metrics, optimizer, config,
+                 device, data_loader, valid_data_loader, lr_scheduler=None):
+        super().__init__(model, criterion, metrics, optimizer, config,
+                         device, data_loader, valid_data_loader, lr_scheduler)
+
+class Trainer_CNN(Trainer):
+    """
+    Trainer class for CNN models.
+    """
+    def __init__(self, model, criterion, metrics, optimizer, config,
+                 device, data_loader, valid_data_loader, lr_scheduler=None):
+        super().__init__(model, criterion, metrics, optimizer, config,
+                         device, data_loader, valid_data_loader, lr_scheduler)
+        
+    # 重写_train_epoch和_valid_epoch，只更改loss计算和指标计算部分
+    def _train_epoch(self, epoch):
+        """
+        Training logic for an epoch
+
+        :param epoch: Integer, current training epoch.
+        :return: A log that contains average loss and metric in this epoch.
+        """
+        self.model.train()
+        self.train_metrics.reset()
+        scaler = getattr(self.data_loader, 'target_scaler', None)
+        for batch_idx, (data, target, case_ids) in enumerate(self.data_loader):
+            data, target = data.to(self.device), target.to(self.device)
+
+            self.optimizer.zero_grad()
+            # -----------------------ADJUST-------------------------------
+            # output = self.model(data)
+            # loss = self.criterion(output, target)
+            pred_mean_list, pred_var_list = self.model(data)  # 含多尺度中间输出
+            target_list = [F.interpolate(target, size=pred_mean.shape[-1], mode='linear', align_corners=False) for pred_mean in pred_mean_list]
+            target_list[-1] = target
+
+            loss_list = []
+            _lamda = 2.0
+            loss_weights = [] # 从1开始的等比数列，等比因子为_lamda
+            for i in range(len(pred_mean_list)):
+                loss = self.criterion(pred_mean_list[i], target_list[i], pred_var_list[i]) # GaussianNLLloss
+                loss_list.append(loss)
+                loss_weights.append(_lamda ** i)
+
+            loss = sum(w * l for w, l in zip(loss_weights, loss_list)) / sum(loss_weights)
+            # ------------------------------------------------------------
+            loss.backward()
+            self.optimizer.step()
+
+            self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
+            self.train_metrics.update('loss', loss.item())
+            # 在计算训练指标前，进行逆变换; 如果没有scaler，此处逆变换函数会返回原始张量
+            pred_mean_orig, target_orig = inverse_transform(pred_mean_list[-1], target, scaler)  # 只对最后一个尺度的输出计算指标
+            for met in self.metric_ftns:
+                # ----------------------ADJUST--------------------------------
+                # self.train_metrics.update(met.__name__, met(output, target))
+                self.train_metrics.update(met.__name__, met(pred_mean_orig, target_orig))
+                # ------------------------------------------------------------
+
+            if batch_idx % self.log_step == 0:
+                self.logger.debug('Train Epoch: {} {} Loss: {:.6f}'.format(
+                    epoch,
+                    self._progress(batch_idx),
+                    loss.item()))
+                # ----------------------ADJUST--------------------------------
+                # self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
+                # ------------------------------------------------------------
+
+            if batch_idx == self.len_epoch:
+                break
+        log = self.train_metrics.result()
+
+        if self.do_validation:
+            val_log = self._valid_epoch(epoch)
+            log.update(**{'val_'+k : v for k, v in val_log.items()})
+
+        if self.lr_scheduler is not None:
+            self.lr_scheduler.step()
+        return log
+
+    def _valid_epoch(self, epoch):
+        """
+        Validate after training an epoch
+
+        :param epoch: Integer, current training epoch.
+        :return: A log that contains information about validation
+        """
+        self.model.eval()
+        self.valid_metrics.reset()
+        scaler = getattr(self.data_loader, 'target_scaler', None)
+        with torch.no_grad():
+            for batch_idx, (data, target, case_ids) in enumerate(self.valid_data_loader):
+                data, target = data.to(self.device), target.to(self.device)
+                # -----------------------ADJUST-------------------------------
+                # output = self.model(data)
+                # loss = self.criterion(output, target)
+                pred_mean_list, pred_var_list = self.model(data)  # 含多尺度中间输出
+                target_list = [F.interpolate(target, size=pred_mean.shape[-1], mode='linear', align_corners=False) for pred_mean in pred_mean_list]
+                target_list[-1] = target
+
+                loss_list = []
+                _lamda = 2.0
+                loss_weights = [] # 从1开始的等比数列，等比因子为_lamda
+                for i in range(len(pred_mean_list)):
+                    loss = self.criterion(pred_mean_list[i], target_list[i], pred_var_list[i]) # GaussianNLLloss
+                    loss_list.append(loss)
+                    loss_weights.append(_lamda ** i)
+
+                loss = sum(w * l for w, l in zip(loss_weights, loss_list)) / sum(loss_weights)
+                # --------------------------------------------
+
+                self.writer.set_step((epoch - 1) * len(self.valid_data_loader) + batch_idx, 'valid')
+                self.valid_metrics.update('loss', loss.item())
+                # 在计算验证指标前，进行逆变换；如果没有scaler，此处逆变换函数会返回原始张量
+                pred_mean_orig, target_orig = inverse_transform(pred_mean_list[-1], target, scaler)
+                for met in self.metric_ftns:
+                    # ----------------------ADJUST--------------------------------
+                    # self.valid_metrics.update(met.__name__, met(output, target))
+                    self.valid_metrics.update(met.__name__, met(pred_mean_orig, target_orig))
+                    
+                # self.writer.add_image('input', make_grid(data.cpu(), nrow=8, normalize=True))
+                # ------------------------------------------------------------
+        # add histogram of model parameters to the tensorboard
+        for name, p in self.model.named_parameters():
+            self.writer.add_histogram(name, p, bins='auto')
+        return self.valid_metrics.result()

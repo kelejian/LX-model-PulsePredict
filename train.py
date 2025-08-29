@@ -9,7 +9,7 @@ import model.loss as module_loss
 import model.metric as module_metric
 import model.model as module_arch
 from parse_config import ConfigParser
-from trainer import Trainer
+from trainer import Trainer_MLP, Trainer_CNN
 from utils import prepare_device
 
 
@@ -52,6 +52,12 @@ def main(config):
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
     optimizer = config.init_obj('optimizer', torch.optim, trainable_params)
     lr_scheduler = config.init_obj('lr_scheduler', torch.optim.lr_scheduler, optimizer)
+
+
+    if 'CNN' in config['name']:
+        Trainer = Trainer_CNN
+    if 'MLP' in config['name']:
+        Trainer = Trainer_MLP
 
     trainer = Trainer(model, criterion, metrics, optimizer,
                       config=config,
