@@ -123,7 +123,7 @@ class UpsamplingBlock(BaseModel):
     一维残差上采样块 (1D Residual Upsampling Block)。
     采用 'Upsample + Conv1d' 策略替代转置卷积，以避免棋盘效应。
     """
-    def __init__(self, in_channels, out_channels, UpLayer_ks=1, scale_factor=2):
+    def __init__(self, in_channels, out_channels, UpLayer_ks=3, ResLayer_ks=3,  scale_factor=2):
         super().__init__()
         # 结合了“尺度提升”和“特征变换”的模块
         self.upsample_conv = nn.Sequential(
@@ -133,7 +133,7 @@ class UpsamplingBlock(BaseModel):
             nn.Conv1d(in_channels, out_channels, kernel_size=UpLayer_ks, padding='same'),
         )
         # 步骤3: 使用残差块进行深度特征精调
-        self.res_block = ResBlock1D(out_channels, out_channels)
+        self.res_block = ResBlock1D(out_channels, out_channels, ResLayer_ks)
 
     def forward(self, x):
         """
@@ -250,8 +250,8 @@ class PulseCNN(BaseModel):
     """
     def __init__(self, input_dim=3, output_dim=200, output_channels=3,
                  mlp_latent_dim=256, mlp_num_layers=3,
-                 projection_init_channels=16,
-                 channels_list=[256, 128, 64, 32], scale_factor=2):
+                 projection_init_channels=16, UpLayer_ks=3, ResLayer_ks=3,
+                 channels_list=[256, 128, 64], scale_factor=2):
         """
         :param input_dim: 输入工况参数的维度。
         :param output_dim: 最终输出波形的时间点数。
@@ -297,7 +297,7 @@ class PulseCNN(BaseModel):
         self.decoder_blocks = nn.ModuleList()
         for i in range(num_upsamples):
             self.decoder_blocks.append(
-                UpsamplingBlock(in_channels=channels_list[i], out_channels=channels_list[i+1], UpLayer_ks=1, scale_factor=scale_factor)
+                UpsamplingBlock(in_channels=channels_list[i], out_channels=channels_list[i+1], UpLayer_ks=UpLayer_ks, ResLayer_ks=ResLayer_ks, scale_factor=scale_factor)
             )
 
         # 4. 多尺度输出头: 结构与之前版本保持一致
