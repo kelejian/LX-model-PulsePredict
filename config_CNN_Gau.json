@@ -1,13 +1,15 @@
 {
-    "name": "CrashPulse_MLP_GauNLL",
+    "name": "PulseCNN_GauNLL",
     "n_gpu": 1,
     "arch": {
-        "type": "PulseMLP",
+        "type": "PulseCNN",
         "args": {
             "GauNll_use": true,
-            "hidden_dims": 256,
-            "num_layers": 3,
-            "dropout": 0.2
+            "mlp_latent_dim": 256,
+            "mlp_num_layers": 2,
+            "projection_init_channels": 16,
+            "UpLayer_ks": 3,
+            "channels_list": [256, 128, 64]
         }
     },
     "data_loader_train": {
@@ -39,15 +41,19 @@
     "optimizer": {
         "type": "AdamW",
         "args": {
-            "lr": 0.001,
-            "weight_decay": 0.001
+            "lr": 2e-4,
+            "weight_decay": 0.0012
         }
     },
     "loss": {
-        "type": "GaussianNLLLoss",
+        "type": "MultiLoss",
         "args": {
-            "eps": 1e-6,
-            "reduction": "mean"
+            "loss_weights": [1.0, 2.0, 4.0],
+            "base_loss_type": "GaussianNLLLoss",
+            "base_loss_args": {
+                "eps": 1e-6,
+                "reduction": "mean"
+            }
         }
     },
     "metrics": [
@@ -61,17 +67,17 @@
     "lr_scheduler": {
         "type": "CosineAnnealingLR",
         "args": {
-            "T_max": 50,
-            "eta_min": 1e-6
+            "T_max": 60,
+            "eta_min": 2e-7
         }
     },
     "trainer": {
-        "epochs": 50,
+        "epochs": 60,
         "save_dir": "saved/",
         "save_period": 5,
         "verbosity": 2,
         "monitor": "max iso_rating_x",
-        "early_stop": 50,
+        "early_stop": 100,
         "tensorboard": true
     }
 }

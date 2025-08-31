@@ -4,6 +4,7 @@
     "arch": {
         "type": "PulseCNN",
         "args": {
+            "GauNll_use": true,
             "mlp_latent_dim": 256,
             "mlp_num_layers": 2,
             "projection_init_channels": 16,
@@ -45,10 +46,13 @@
         }
     },
     "loss": {
-        "type": "GaussianNLLLoss",
+        "type": "MultiLoss",
         "args": {
-            "eps": 1e-6,
-            "reduction": "mean"
+            "loss_weights": [1.0, 2.0, 4.0],
+            "base_loss_type": "GaussianNLLLoss",
+            "base_loss_args": {
+                "reduction": "mean"
+            }
         }
     },
     "metrics": [

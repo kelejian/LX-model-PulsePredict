@@ -1,4 +1,4 @@
-import os
+import os, sys
 import logging
 from pathlib import Path
 from functools import reduce, partial
@@ -9,7 +9,7 @@ from utils import read_json, write_json
 
 
 class ConfigParser:
-    def __init__(self, config, resume=None, modification=None, run_id=None):
+    def __init__(self, config, resume=None, modification=None, run_id=None, is_test_run=False, is_finetune=False):
         """
         class to parse configuration json file. Handles hyperparameters for training, initializations of modules, checkpoint saving
         and logging module.
@@ -17,29 +17,56 @@ class ConfigParser:
         :param resume: String, path to the checkpoint being loaded.
         :param modification: Dict keychain:value, specifying position values to be replaced from config dict.
         :param run_id: Unique Identifier for training processes. Used to save checkpoints and training log. Timestamp is being used as default
+        :param is_test_run: Flag to indicate if the run is for testing.
+        :param is_finetune: Flag to indicate if the run is for fine-tuning.
         """
         # load config file and apply modification
         self._config = _update_config(config, modification)
         self.resume = resume
 
-        # set save_dir where trained model and log will be saved.
-        save_dir = Path(self.config['trainer']['save_dir'])
-
+        timestamp = datetime.now().strftime(r'%m%d_%H%M%S')
+        save_dir_root = Path(self.config['trainer']['save_dir'])
         exper_name = self.config['name']
-        if run_id is None: # use timestamp as default run-id
-            run_id = datetime.now().strftime(r'%m%d_%H%M%S')
-        self._save_dir = save_dir / 'models' / exper_name / run_id
-        self._log_dir = save_dir / 'log' / exper_name / run_id
 
-        # make directory for saving checkpoints and log.
-        exist_ok = run_id == ''
-        self.save_dir.mkdir(parents=True, exist_ok=exist_ok)
-        self.log_dir.mkdir(parents=True, exist_ok=exist_ok)
+        # 【核心修改】根据运行模式决定并同步创建 models 和 log 目录
+        if self.resume and not is_finetune:
+            # --- 恢复训练 (RESUME) 或 测试 (TEST) 模式 ---
+            # 确定父级目录
+            # e.g., resume path is '.../saved/models/PulseCNN_GauNLL/1225_103000/model_best.pth'
+            # parent_model_dir is '.../saved/models/PulseCNN_GauNLL/1225_103000'
+            parent_model_dir = Path(self.resume).parent
+            # parent_log_dir is '.../saved/log/PulseCNN_GauNLL/1225_103000'
+            parent_log_dir = save_dir_root / 'log' / parent_model_dir.parent.name / parent_model_dir.name
+            
+            session_name = f"test_{timestamp}" if is_test_run else f"resume_{timestamp}"
+            
+            self._save_dir = parent_model_dir / session_name
+            self._log_dir = parent_log_dir / session_name
 
-        # save updated config file to the checkpoint dir
-        write_json(self.config, self.save_dir / 'config.json')
+            # 创建新的会话子目录
+            self.save_dir.mkdir(parents=True, exist_ok=False)
+            self.log_dir.mkdir(parents=True, exist_ok=False)
+            
+            # 将当前配置的副本写入新的模型会话子目录
+            write_json(self.config, self.save_dir / 'config.json')
 
-        # configure logging module
+        else:
+            # --- 从零训练 (NEW TRAINING) 或 微调 (FINETUNING) 模式 ---
+            if is_finetune:
+                exper_name = f"{exper_name}_finetuned"
+            
+            run_id = timestamp if run_id is None else run_id
+            self._save_dir = save_dir_root / 'models' / exper_name / run_id
+            self._log_dir = save_dir_root / 'log' / exper_name / run_id
+
+            # 创建全新的顶级目录
+            self.save_dir.mkdir(parents=True, exist_ok=False)
+            self.log_dir.mkdir(parents=True, exist_ok=False)
+
+            # 将配置写入新的顶级模型目录
+            write_json(self.config, self.save_dir / 'config.json')
+
+        # 统一的日志模块配置，指向最终确定的log_dir
         setup_logging(self.log_dir)
         self.log_levels = {
             0: logging.WARNING,
@@ -59,6 +86,10 @@ class ConfigParser:
 
         if args.device is not None:
             os.environ["CUDA_VISIBLE_DEVICES"] = args.device
+        
+        # 根据调用脚本和参数判断运行模式
+        is_test_run = 'test.py' in sys.argv[0]
+        
         if args.resume is not None:
             resume = Path(args.resume)
             cfg_fname = resume.parent / 'config.json'
@@ -69,13 +100,17 @@ class ConfigParser:
             cfg_fname = Path(args.config)
         
         config = read_json(cfg_fname)
+        
+        is_finetune = False
         if args.config and resume:
-            # update new config for fine-tuning
+            # 如果同时提供了-c和-r，则认为是微调模式，并用新config更新
             config.update(read_json(args.config))
+            is_finetune = True
 
         # parse custom cli options into dictionary
         modification = {opt.target : getattr(args, _get_opt_name(opt.flags)) for opt in options}
-        return cls(config, resume, modification)
+        
+        return cls(config, resume, modification, is_test_run=is_test_run, is_finetune=is_finetune)
 
     def init_obj(self, name, module, *args, **kwargs):
         """

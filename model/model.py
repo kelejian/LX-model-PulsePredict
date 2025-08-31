@@ -12,7 +12,7 @@ class PulseMLP(BaseModel):
     此模型输出高斯分布的均值和方差，以配合 GaussianNLLLoss 使用。
     """
     def __init__(self, input_dim=3, output_channels=3, output_points=200, 
-                 hidden_dims=256, num_layers=3, dropout=0.2):
+                 hidden_dims=256, num_layers=3, dropout=0.2, GauNll_use=True):
         """
         模型初始化。
         
@@ -22,11 +22,13 @@ class PulseMLP(BaseModel):
         :param hidden_dims: MLP 隐藏层的维度。
         :param num_layers: MLP 的层数。
         :param dropout: Dropout 概率。
+        :param GauNll_use: 是否使用高斯NLLLoss，若为False，则只输出均值。
         """
         super().__init__()
         
         self.output_channels = output_channels
         self.output_points = output_points
+        self.GauNll_use = GauNll_use
         output_dim = output_channels * output_points # 3 * 200 = 600
 
         # 1. 定义一个共享的MLP骨干网络，用于从低维输入中提取高维特征
@@ -40,45 +42,47 @@ class PulseMLP(BaseModel):
             plain_last=False,            # 对骨干网络的最后一层也应用激活和归一化
             dropout=dropout
         )
-        # 2. 定义两个独立的"头"（线性层），分别用于预测均值和对数方差
-        # 均值头
+        # 2. 定义预测头
         self.mean_head = nn.Linear(hidden_dims + input_dim, output_dim)
-        
-        # 对数方差头 (预测log(var)而不是直接预测var，以保证方差为正，且训练更稳定)
-        self.log_var_head = nn.Linear(hidden_dims + input_dim, output_dim)
+        if self.GauNll_use:
+            # 对数方差头 (预测log(var)而不是直接预测var，以保证方差为正，且训练更稳定)
+            self.log_var_head = nn.Linear(hidden_dims + input_dim, output_dim)
 
     def forward(self, x):
         """
         前向传播函数。
-
-        :param x: 输入张量，形状为 (batch_size, 3)。
-        :return: 一个元组，包含均值和方差张量 (mean, variance)，
-                 每个张量的形状都为 (batch_size, 3, 200)。
         """
         # x 形状: (batch_size, 3)
-        
-        # 通过骨干网络提取特征
         latent_features = self.backbone(x)  # -> (batch_size, hidden_dims)
-
-        # concat特征和输入
         latent_features = torch.cat([latent_features, x], dim=-1)  # -> (batch_size, hidden_dims + 3)
 
-        # 从特征中预测均值
         mean = self.mean_head(latent_features) # -> (batch_size, 600)
-        
-        # 从特征中预测对数方差
-        log_var = self.log_var_head(latent_features) # -> (batch_size, 600)
-        
-        # 将均值和对数方差重塑为波形的目标形状
         mean = mean.view(-1, self.output_channels, self.output_points) # -> (batch_size, 3, 200)
-        log_var = log_var.view(-1, self.output_channels, self.output_points) # -> (batch_size, 3, 200)
 
-        # 通过指数运算得到方差，确保其为正值
-        # 加上一个小的epsilon可以增加数值稳定性，防止方差为0
+        if not self.GauNll_use:
+            return mean
+
+        log_var = self.log_var_head(latent_features) # -> (batch_size, 600)
+        log_var = log_var.view(-1, self.output_channels, self.output_points) # -> (batch_size, 3, 200)
         variance = torch.exp(log_var)
         
         return mean, variance
 
+    def compute_loss(self, model_output, target, criterion):
+        if self.GauNll_use:
+            pred_mean, pred_var = model_output
+            return criterion(pred_mean, pred_var, target) # 注意GaussNLLloss的forward函数签名
+        else:
+            # model_output is just pred_mean
+            return criterion(model_output, target)
+
+    def get_metrics_output(self, model_output):
+        if self.GauNll_use:
+            # The first element of the tuple is the mean prediction
+            return model_output[0]
+        else:
+            # The output is the prediction itself
+            return model_output
 
 #==========================================================================================
 # PulseCNN (层级式多尺度生成 + 残差精调)
@@ -240,122 +244,116 @@ class PulseCNN_V1(BaseModel):
 class PulseCNN(BaseModel):
     """
     基于1D-CNN的碰撞波形预测模型 (V2 - 参数高效版)。
-
-    该模型采用您提出的新方案：
-    1. 使用一个高效的MLP作为编码器，生成一个低维潜在向量。
-    2. 将原始输入与潜在向量拼接，实现信息融合。
-    3. 通过一个参数高效的“投影块”（线性层+1x1卷积）将融合后的特征
-       映射为解码器所需的初始序列。
-    4. 采用层级式多尺度解码器（残差上采样），实现从粗到精的预测。
     """
     def __init__(self, input_dim=3, output_dim=200, output_channels=3,
                  mlp_latent_dim=256, mlp_num_layers=3,
                  projection_init_channels=16, UpLayer_ks=3, ResLayer_ks=3,
-                 channels_list=[256, 128, 64], scale_factor=2):
-        """
-        :param input_dim: 输入工况参数的维度。
-        :param output_dim: 最终输出波形的时间点数。
-        :param output_channels: 输出波形的通道数 (x, y, z三轴)。
-        :param mlp_latent_dim: MLP编码器输出的潜在向量维度。
-        :param mlp_num_layers: MLP编码器的层数。
-        :param projection_init_channels: 投影块中间层的初始通道数。
-        :param channels_list: 解码器中每个层级的通道数列表。
-        :param scale_factor: 上采样因子。
-        """
+                 channels_list=[256, 128, 64], scale_factor=2, GauNll_use=True):
         super().__init__()
         
         num_upsamples = len(channels_list) - 1
         self.initial_length = output_dim // (scale_factor ** num_upsamples)
         self.output_dim = output_dim
+        self.GauNll_use = GauNll_use
 
-        # 1. 输入编码器: 将工况参数高效地映射为低维潜在向量 z
+        # 1. 输入编码器
         self.encoder = PygMLP(
-            in_channels=input_dim,
-            hidden_channels=mlp_latent_dim,
-            out_channels=mlp_latent_dim, # 输出一个紧凑的潜在向量
-            num_layers=mlp_num_layers,
-            norm="batch_norm",
-            act="leaky_relu",
-            plain_last=False, # 对输出层也应用BN和ReLU
-            dropout=0.1
+            in_channels=input_dim, hidden_channels=mlp_latent_dim, out_channels=mlp_latent_dim,
+            num_layers=mlp_num_layers, norm="batch_norm", act="leaky_relu", plain_last=False, dropout=0.1
         )
 
-        # 2. 投影块 (Projection Block): 高效地将融合特征映射为初始序列
+        # 2. 投影块
         self.projection_block = nn.Sequential(
-            # 步骤1: 小型线性层，进行低维时序投影
             nn.Linear(mlp_latent_dim + input_dim, self.initial_length * projection_init_channels),
-            nn.BatchNorm1d(self.initial_length * projection_init_channels),
-            nn.LeakyReLU(),
-            # (Reshape 操作将在 forward 函数中进行)
-            # 步骤2: 高效的1x1卷积，进行通道扩张
+            nn.BatchNorm1d(self.initial_length * projection_init_channels), nn.LeakyReLU(),
             nn.Conv1d(projection_init_channels, channels_list[0], kernel_size=1)
         )
         self.projection_init_channels = projection_init_channels
         self.initial_shape_after_proj = (channels_list[0], self.initial_length)
 
-        # 3. 多尺度解码器: 结构与之前版本保持一致
+        # 3. 多尺度解码器
         self.decoder_blocks = nn.ModuleList()
         for i in range(num_upsamples):
             self.decoder_blocks.append(
                 UpsamplingBlock(in_channels=channels_list[i], out_channels=channels_list[i+1], UpLayer_ks=UpLayer_ks, ResLayer_ks=ResLayer_ks, scale_factor=scale_factor)
             )
 
-        # 4. 多尺度输出头: 结构与之前版本保持一致
+        # 4. 多尺度输出头
         self.output_heads = nn.ModuleList()
         for channels in channels_list:
-            head = nn.ModuleDict({
-                'mean': nn.Conv1d(channels, output_channels, kernel_size=1),
-                'log_var': nn.Conv1d(channels, output_channels, kernel_size=1)
-            })
-            self.output_heads.append(head)
+            head_modules = {'mean': nn.Conv1d(channels, output_channels, kernel_size=1)}
+            if self.GauNll_use:
+                head_modules['log_var'] = nn.Conv1d(channels, output_channels, kernel_size=1)
+            self.output_heads.append(nn.ModuleDict(head_modules))
 
         self.last_length = self.initial_length * (scale_factor ** num_upsamples)
 
     def forward(self, x):
-        """
-        前向传播函数。
-        :param x: 输入张量，形状为 (B, 3)。
-        :return: 一个元组，包含两个列表 (mean_preds, var_preds)。
-        """
-        # --- 1. 编码与信息融合 ---
-        # x 形状: (B, 3)
-        z = self.encoder(x)             # -> (B, mlp_latent_dim)
-        z_prime = torch.cat([z, x], dim=-1) # -> (B, mlp_latent_dim + 3)
+        # 1. 编码与信息融合
+        z = self.encoder(x)
+        z_prime = torch.cat([z, x], dim=-1)
 
-        # --- 2. 通过投影块生成初始序列 ---
-        # z_prime 形状: (B, mlp_latent_dim + 3)
-        proj_out = self.projection_block[0](z_prime) # Linear: -> (B, L_0 * C_init)
-        proj_out = self.projection_block[1](proj_out) # BatchNorm1d
-        proj_out = self.projection_block[2](proj_out) # LeakyReLU
-        
-        # Reshape:
-        proj_out_reshaped = proj_out.view(-1, self.projection_init_channels, self.initial_length) # -> (B, C_init, L_0)
-        
-        # 1x1 Conv for channel expansion:
-        initial_sequence = self.projection_block[3](proj_out_reshaped) # -> (B, C_0, L_0)
+        # 2. 通过投影块生成初始序列
+        proj_out = self.projection_block[0](z_prime)
+        proj_out = self.projection_block[1](proj_out)
+        proj_out = self.projection_block[2](proj_out)
+        proj_out_reshaped = proj_out.view(-1, self.projection_init_channels, self.initial_length)
+        initial_sequence = self.projection_block[3](proj_out_reshaped)
 
-        # --- 3. 解码与多尺度特征提取 ---
+        # 3. 解码与多尺度特征提取
         features_list = [initial_sequence]
         z_decoded = initial_sequence
         for block in self.decoder_blocks:
             z_decoded = block(z_decoded)
             features_list.append(z_decoded)
 
-        # --- 4. 多尺度预测 ---
+        # 4. 多尺度预测
         mean_preds = []
-        log_var_preds = []
+        log_var_preds = [] if self.GauNll_use else None
+
         for features, head in zip(features_list, self.output_heads):
             mean = head['mean'](features)
-            log_var = head['log_var'](features)
             mean_preds.append(mean)
-            log_var_preds.append(log_var)
+            if self.GauNll_use:
+                log_var = head['log_var'](features)
+                log_var_preds.append(log_var)
         
-        # --- 5. 最终长度校正 ---
+        # 5. 最终长度校正
         if self.last_length != self.output_dim:
             mean_preds[-1] = F.interpolate(mean_preds[-1], size=self.output_dim, mode='linear', align_corners=False)
-            log_var_preds[-1] = F.interpolate(log_var_preds[-1], size=self.output_dim, mode='linear', align_corners=False)
+            if self.GauNll_use:
+                log_var_preds[-1] = F.interpolate(log_var_preds[-1], size=self.output_dim, mode='linear', align_corners=False)
 
-        # --- 6. 计算方差 ---
+        if not self.GauNll_use:
+            return mean_preds
+            
+        # 6. 计算方差
         var_preds = [torch.exp(log_var) for log_var in log_var_preds]
-        
         return mean_preds, var_preds
+
+    def compute_loss(self, model_output, target, criterion):
+        """
+        准备多尺度预测和目标，并调用criterion计算损失。
+        """
+        if self.GauNll_use:
+            pred_mean_list, pred_var_list = model_output
+            # 将均值和方差列表打包成criterion期望的格式
+            pred_list = list(zip(pred_mean_list, pred_var_list))
+        else:
+            pred_mean_list = model_output
+            pred_list = pred_mean_list
+        
+        # 为每个尺度的预测准备对应的目标
+        target_list = [F.interpolate(target, size=pred_mean.shape[-1], mode='linear', align_corners=False) for pred_mean in pred_mean_list]
+        target_list[-1] = target # 最后为原始尺度的真值
+
+        # 调用criterion（现在是MultiLoss实例）计算总损失
+        return criterion(pred_list, target_list)
+
+    def get_metrics_output(self, model_output):
+        if self.GauNll_use:
+            # model_output is (pred_mean_list, pred_var_list)
+            return model_output[0][-1]  # Return the last mean prediction
+        else:
+            # model_output is pred_mean_list
+            return model_output[-1]

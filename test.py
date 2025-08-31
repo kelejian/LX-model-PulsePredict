@@ -9,7 +9,7 @@ import model.metric as module_metric
 import model.model as module_arch
 from parse_config import ConfigParser
 from utils import inverse_transform, plot_waveform_comparison, InputScaler
-import torch.nn.functional as F
+from pathlib import Path
 
 def main(config):
     logger = config.get_logger('test')
@@ -49,38 +49,21 @@ def main(config):
     with torch.no_grad():
         for batch_idx, (data, target, case_ids) in enumerate(tqdm(data_loader)):
             data, target = data.to(device), target.to(device)
-            # -----------------------ADJUST-------------------------------
-            # 在归一化后的尺度上计算loss
-            # pred_mean, pred_var = model(data)
-            # loss = loss_fn(pred_mean, target, pred_var)
-
-            pred_mean_list, pred_var_list = model(data)
-            target_list = [F.interpolate(target, size=pred_mean.shape[-1], mode='linear', align_corners=False) for pred_mean in pred_mean_list]
-            target_list[-1] = target
-
-            loss_list = []
-            _lamda = 2.0
-            loss_weights = [] # 从1开始的等比数列，等比因子为_lamda
-            for j in range(len(pred_mean_list)):
-                loss = loss_fn(pred_mean_list[j], target_list[j], pred_var_list[j]) # GaussianNLLloss
-                loss_list.append(loss)
-                loss_weights.append(_lamda ** j)
-
-            loss = sum(w * l for w, l in zip(loss_weights, loss_list)) / sum(loss_weights)
+            # ------------------- 使用统一的模型接口 ----------------------
+            output = model(data)
+            loss = model.compute_loss(output, target, loss_fn)
+            metrics_output = model.get_metrics_output(output)
             # ------------------------------------------------------------
             batch_size = data.shape[0]
             total_loss += loss.item() * batch_size
+            
             # 计算指标前，先对数据进行逆变换，如果没有scaler，则返回原始张量
-            # pred_mean_orig, target_orig = inverse_transform(pred_mean, target, scaler)
-            pred_mean_orig, target_orig = inverse_transform(pred_mean_list[-1], target, scaler)
+            pred_mean_orig, target_orig = inverse_transform(metrics_output, target, scaler)
             # 在原始尺度上计算指标
-            # for i, metric in enumerate(metric_fns):
-            #     total_metrics[i] += metric(output, target) * batch_size
             for met in metric_fns:
                 metric_name = met.__name__
                 total_metrics[metric_name] += met(pred_mean_orig, target_orig) * batch_size
             # ------------------------------画图----------------------------------
-            # 只对第一个批次 (batch_idx == 0) 进行绘图
             if batch_idx == 0:
                 num_samples_to_plot = min(40, batch_size)
                 print("\nPlotting samples...")
@@ -93,12 +76,12 @@ def main(config):
                     raw_vel, raw_ang, raw_ov = input_scaler.inverse_transform(norm_vel, norm_ang, norm_ov)
 
                     collision_params = {'vel': raw_vel, 'ang': raw_ang, 'ov': raw_ov}
-                    # -----------------------------------------
                     
                     pred_sample = pred_mean_orig[j]
                     target_sample = target_orig[j]
                     sample_case_id = case_ids[j].item()
                     
+                    # 使用被重定向后的 config.save_dir
                     plot_waveform_comparison(
                         pred_wave=pred_sample,
                         true_wave=target_sample,
@@ -109,7 +92,7 @@ def main(config):
                         sample_idx=j,
                         save_dir=config.save_dir
                     )
-                logger.info(f"\nSome plots of first batch results saved to '{config.save_dir}' directory.\n")
+                logger.info(f"\n绘图结果已保存至 '{config.save_dir}' 目录下的 'fig' 子目录中。\n")
 
             # --------------------------------------------------------------------
 
@@ -125,7 +108,7 @@ def main(config):
 
 
 if __name__ == '__main__':
-    args = argparse.ArgumentParser(description='LX-Project Test')
+    args = argparse.ArgumentParser(description='LX-CrashPulsePredictionModel Test')
     args.add_argument('-c', '--config', default=None, type=str,
                       help='config file path (default: None)')
     args.add_argument('-r', '--resume', default=None, type=str,
