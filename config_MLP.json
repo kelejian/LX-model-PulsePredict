@@ -13,7 +13,7 @@
     "data_loader_train": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\packaged_data_train.npz",
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0915/packaged_data_train.npz",
             "batch_size": 256,
             "shuffle": true,
             "validation_split": 0,
@@ -26,7 +26,7 @@
     "data_loader_test": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\packaged_data_test.npz",
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0915/packaged_data_test.npz",
             "batch_size": 256,
             "shuffle": false,
             "validation_split": 0,

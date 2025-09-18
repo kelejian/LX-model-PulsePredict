@@ -151,7 +151,7 @@ if __name__ == "__main__":
     # 示例输入数据（模拟数据集第1个batch）
     batch_size = 128
 
-    y = torch.randn(batch_size, 3, 200).cuda()
+    y = torch.randn(batch_size, 3, 150).cuda()
     x = torch.randn(batch_size, 3).cuda()  # 随机生成连续特征
 
     # 测试模型

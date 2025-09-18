@@ -11,14 +11,14 @@ class PulseMLP(BaseModel):
 
     此模型输出高斯分布的均值和方差，以配合 GaussianNLLLoss 使用。
     """
-    def __init__(self, input_dim=3, output_channels=3, output_points=200, 
+    def __init__(self, input_dim=3, output_channels=3, output_points=150, 
                  hidden_dims=256, num_layers=3, dropout=0.2, GauNll_use=True):
         """
         模型初始化。
         
         :param input_dim: 输入特征的维度 (工况参数数量, 默认为3)。
         :param output_channels: 输出波形的通道数 (x, y, z三轴, 默认为3)。
-        :param output_points: 每条波形的时间点数 (默认为200)。
+        :param output_points: 每条波形的时间点数 (默认为150)。
         :param hidden_dims: MLP 隐藏层的维度。
         :param num_layers: MLP 的层数。
         :param dropout: Dropout 概率。
@@ -29,7 +29,7 @@ class PulseMLP(BaseModel):
         self.output_channels = output_channels
         self.output_points = output_points
         self.GauNll_use = GauNll_use
-        output_dim = output_channels * output_points # 3 * 200 = 600
+        output_dim = output_channels * output_points # 3 * 150 = 450
 
         # 1. 定义一个共享的MLP骨干网络，用于从低维输入中提取高维特征
         self.backbone = PygMLP(
@@ -56,14 +56,14 @@ class PulseMLP(BaseModel):
         latent_features = self.backbone(x)  # -> (batch_size, hidden_dims)
         latent_features = torch.cat([latent_features, x], dim=-1)  # -> (batch_size, hidden_dims + 3)
 
-        mean = self.mean_head(latent_features) # -> (batch_size, 600)
-        mean = mean.view(-1, self.output_channels, self.output_points) # -> (batch_size, 3, 200)
+        mean = self.mean_head(latent_features) # -> (batch_size, 450)
+        mean = mean.view(-1, self.output_channels, self.output_points) # -> (batch_size, 3, 150)
 
         if not self.GauNll_use:
             return mean
 
-        log_var = self.log_var_head(latent_features) # -> (batch_size, 600)
-        log_var = log_var.view(-1, self.output_channels, self.output_points) # -> (batch_size, 3, 200)
+        log_var = self.log_var_head(latent_features) # -> (batch_size, 450)
+        log_var = log_var.view(-1, self.output_channels, self.output_points) # -> (batch_size, 3, 150)
         variance = torch.exp(log_var)
         
         return mean, variance
@@ -158,7 +158,7 @@ class PulseCNN_V1(BaseModel):
     该模型采用层级式多尺度生成架构，其上采样单元为残差精调模块，
     旨在实现从粗到精的“逐步细化预测”。
     """
-    def __init__(self, input_dim=3, output_dim=200, output_channels=3, 
+    def __init__(self, input_dim=3, output_dim=150, output_channels=3, 
                  mlp_latent_dim=256, mlp_num_layers=2, 
                  channels_list=[256, 128, 64, 32], scale_factor=2 ):
         super().__init__()
@@ -245,7 +245,7 @@ class PulseCNN(BaseModel):
     """
     基于1D-CNN的碰撞波形预测模型 (V2 - 参数高效版)。
     """
-    def __init__(self, input_dim=3, output_dim=200, output_channels=3,
+    def __init__(self, input_dim=3, output_dim=150, output_channels=3,
                  mlp_latent_dim=256, mlp_num_layers=3,
                  projection_init_channels=16, UpLayer_ks=3, ResLayer_ks=3,
                  channels_list=[256, 128, 64], scale_factor=2, GauNll_use=True):

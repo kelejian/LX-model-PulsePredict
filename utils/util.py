@@ -201,8 +201,8 @@ def plot_waveform_comparison(pred_wave, true_wave, params, case_id, epoch, batch
     """
     绘制单样本的预测与真实波形对比图，并在标题中显示工况参数。
 
-    :param pred_wave: 单个样本的预测波形 (numpy array, shape: (3, 200))
-    :param true_wave: 单个样本的真实波形 (numpy array, shape: (3, 200))
+    :param pred_wave: 单个样本的预测波形 (numpy array, shape: (3, 150))
+    :param true_wave: 单个样本的真实波形 (numpy array, shape: (3, 150))
     :param params: 一个包含原始工况参数的字典, e.g., {'vel': 50.0, 'ang': 30.0, 'ov': 0.5}
     :param case_id: 样本的原始Case ID。
     :param epoch: 当前的epoch数或'test'字符串。
@@ -225,8 +225,8 @@ def plot_waveform_comparison(pred_wave, true_wave, params, case_id, epoch, batch
     if not isinstance(true_wave, np.ndarray):
         true_wave = true_wave.detach().cpu().numpy()
 
-    # 创建时间轴 (1ms to 200ms)
-    time = np.arange(1, 201)
+    # 创建时间轴
+    time = np.arange(1, len(pred_wave[0]) + 1)  # 时间单位为ms
     fig, axes = plt.subplots(3, 1, figsize=(12, 12))
     
     # --- 创建包含工况参数的新标题 ---

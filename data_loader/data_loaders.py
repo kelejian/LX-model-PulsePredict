@@ -42,10 +42,10 @@ class CollisionDataset(Dataset):
         # --- 3. （可选）归一化输出波形 ---
         if self.target_scaler:
             original_shape = raw_waveforms.shape
-            # (N, 3, 200) -> (N * 3 * 200, 1)
+            # (N, 3, 150) -> (N * 3 * 150, 1)
             waveforms_reshaped = raw_waveforms.reshape(-1, 1)
             waveforms_scaled = self.target_scaler.transform(waveforms_reshaped)
-            # (N * 3 * 200, 1) -> (N, 3, 200)
+            # (N * 3 * 150, 1) -> (N, 3, 150)
             waveforms_np = waveforms_scaled.reshape(original_shape)
         else:
             waveforms_np = raw_waveforms

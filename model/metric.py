@@ -254,7 +254,7 @@ def _calculate_iso_rating_for_channel(output, target, channel_idx, dt=0.001):
     """
     with torch.no_grad():
         # 将PyTorch张量转换为Numpy数组
-        # output 和 target 的形状: (batch_size, 3, 200)
+        # output 和 target 的形状: (batch_size, 3, 150)
         pred_waves = output.cpu().numpy()
         true_waves = target.cpu().numpy()
 
@@ -294,8 +294,8 @@ def _rmse_for_channel(output, target, channel_idx):
     """
     内部帮助函数，用于计算指定通道的均方根误差 (RMSE)。
     
-    :param output: 模型的预测输出张量，形状为 (batch_size, 3, 200)。
-    :param target: 真实的标签张量，形状为 (batch_size, 3, 200)。
+    :param output: 模型的预测输出张量，形状为 (batch_size, 3, 150)。
+    :param target: 真实的标签张量，形状为 (batch_size, 3, 150)。
     :param channel_idx: 要计算的通道索引 (0 for x, 1 for y, 2 for z)。
     :return: 指定通道上的RMSE标量值。
     """
@@ -331,12 +331,12 @@ def rmse_z(output, target):
 if __name__ == "__main__":
     # 测试代码
     import pandas as pd
-    pulse1_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x1.csv', sep='\t', header=None, usecols=[1]).values
-    pulse2_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x2.csv', sep='\t', header=None, usecols=[1]).values
-    pulse3_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x3.csv', sep='\t', header=None, usecols=[1]).values
-    pulse4_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x4.csv', sep='\t', header=None, usecols=[1]).values
-    pulse5_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x5.csv', sep='\t', header=None, usecols=[1]).values
-    pulse6_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS资料\VCS代码\10-60\x6.csv', sep='\t', header=None, usecols=[1]).values
+    pulse1_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\old模型_全宽正碰结果\x1.csv', sep='\t', header=None, usecols=[1]).values
+    pulse2_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\old模型_全宽正碰结果\x2.csv', sep='\t', header=None, usecols=[1]).values
+    pulse3_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\old模型_全宽正碰结果\x3.csv', sep='\t', header=None, usecols=[1]).values
+    pulse4_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\old模型_全宽正碰结果\x4.csv', sep='\t', header=None, usecols=[1]).values
+    pulse5_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\old模型_全宽正碰结果\x5.csv', sep='\t', header=None, usecols=[1]).values
+    pulse6_np = pd.read_csv(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\old模型_全宽正碰结果\x6.csv', sep='\t', header=None, usecols=[1]).values
 
     downsample_indices = np.arange(100, 20001, 100)
 

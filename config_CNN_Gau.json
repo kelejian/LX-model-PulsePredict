@@ -7,7 +7,7 @@
             "GauNll_use": true,
             "mlp_latent_dim": 256,
             "mlp_num_layers": 2,
-            "projection_init_channels": 16,
+            "projection_init_channels": 32,
             "UpLayer_ks": 3,
             "channels_list": [256, 128, 64]
         }
@@ -15,8 +15,8 @@
     "data_loader_train": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\packaged_data_train.npz",
-            "batch_size": 256,
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0915/packaged_data_train.npz",
+            "batch_size": 512,
             "shuffle": true,
             "validation_split": 0,
             "num_workers": 0,
@@ -28,7 +28,7 @@
     "data_loader_test": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\仿真数据库相关\\packaged_data_test.npz",
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0915/packaged_data_test.npz",
             "batch_size": 256,
             "shuffle": false,
             "validation_split": 0,
@@ -41,14 +41,14 @@
     "optimizer": {
         "type": "AdamW",
         "args": {
-            "lr": 2e-4,
+            "lr": 3e-4,
             "weight_decay": 0.0012
         }
     },
     "loss": {
         "type": "MultiLoss",
         "args": {
-            "loss_weights": [1.0, 2.0, 4.0],
+            "loss_weights": [1.0, 2.0, 5.0],
             "base_loss_type": "GaussianNLLLoss",
             "base_loss_args": {
                 "eps": 1e-6,
