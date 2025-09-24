@@ -39,7 +39,24 @@ def main(config):
 
     # get function handles of loss and metrics
     # loss_fn = getattr(module_loss, config['loss'])
-    loss_fn = config.init_obj('loss', module_loss)
+    # loss_fn = config.init_obj('loss', module_loss) # <-- 旧的初始化方式
+    
+    # +++ 新的初始化方式 +++
+    loss_fns = []
+    if 'loss' in config.config and isinstance(config['loss'], list):
+        for loss_spec in config['loss']:
+            loss_module_name = loss_spec['type']
+            loss_module_args = loss_spec.get('args', {})
+            loss_instance = getattr(module_loss, loss_module_name)(**loss_module_args)
+            loss_fns.append({
+                'instance': loss_instance,
+                'weight': loss_spec.get('weight', 1.0)
+            })
+    else:
+        # 兼容旧格式的配置文件
+        criterion_instance = config.init_obj('loss', module_loss)
+        loss_fns.append({'instance': criterion_instance, 'weight': 1.0})
+
     metric_fns = [getattr(module_metric, met) for met in config['metrics']]
 
     logger.info('Loading checkpoint: {} ...'.format(config.resume))
@@ -68,7 +85,7 @@ def main(config):
             data, target = data.to(device), target.to(device)
             # ------------------- 使用统一的模型接口 ----------------------
             output = model(data)
-            loss = model.compute_loss(output, target, loss_fn)
+            loss, loss_components = model.compute_loss(output, target, loss_fns)
             metrics_output = model.get_metrics_output(output)
             # ------------------------------------------------------------
             
@@ -89,8 +106,8 @@ def main(config):
             all_targets_orig.append(target_orig.cpu())
 
             # ------------------------------画图----------------------------------
-            if batch_idx == 0:
-                plot_samples(data, pred_mean_orig, target_orig, case_ids, input_scaler, config, logger)
+            if batch_idx == 2:
+                plot_samples(data, batch_idx, pred_mean_orig, target_orig, case_ids, input_scaler, config, logger)
             # --------------------------------------------------------------------
 
     # 将列表中的批次拼接成一个大的张量/数组
@@ -127,28 +144,12 @@ def main(config):
         
         evaluate_subset(subset_preds, subset_targets, subset_losses, metric_fns, logger, f"样本数: {len(indices)}")
 
-
-def evaluate_subset(preds, targets, losses, metric_fns, logger, header_info=None):
-    """
-    计算并打印给定数据子集的各项指标。
-    """
-    if header_info:
-        logger.info(header_info)
-        
-    log = {'loss': np.mean(losses)}
-    for met in metric_fns:
-        log[met.__name__] = met(preds, targets)
-    
-    # 格式化输出
-    for key, value in log.items():
-        logger.info('    {:15s}: {}'.format(str(key), value))
-
-
-def plot_samples(data, pred_mean_orig, target_orig, case_ids, input_scaler, config, logger):
+def plot_samples(data, batch_idx, pred_mean_orig, target_orig, case_ids, input_scaler, config, logger):
     """
     为第一批样本绘图。
     """
-    num_samples_to_plot = min(40, data.shape[0])
+    # num_samples_to_plot = min(20, data.shape[0])
+    num_samples_to_plot = data.shape[0]
     print("\nPlotting first batch samples...")
     for j in range(num_samples_to_plot):
         # --- 从归一化输入中反算出原始工况参数 ---
@@ -170,11 +171,26 @@ def plot_samples(data, pred_mean_orig, target_orig, case_ids, input_scaler, conf
             params=collision_params,
             case_id=sample_case_id,
             epoch='test',
-            batch_idx=0,
+            batch_idx=batch_idx,
             sample_idx=j,
             save_dir=config.save_dir
         )
     logger.info(f"\n绘图结果已保存至 '{config.save_dir}' 目录下的 'fig' 子目录中。\n")
+
+def evaluate_subset(preds, targets, losses, metric_fns, logger, header_info=None):
+    """
+    计算并打印给定数据子集的各项指标。
+    """
+    if header_info:
+        logger.info(header_info)
+        
+    log = {'loss': np.mean(losses)}
+    for met in metric_fns:
+        log[met.__name__] = met(preds, targets)
+    
+    # 格式化输出
+    for key, value in log.items():
+        logger.info('    {:15s}: {}'.format(str(key), value))
 
 
 if __name__ == '__main__':

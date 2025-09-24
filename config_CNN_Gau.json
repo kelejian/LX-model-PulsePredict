@@ -9,7 +9,8 @@
             "mlp_num_layers": 2,
             "projection_init_channels": 32,
             "UpLayer_ks": 3,
-            "channels_list": [256, 128, 64]
+            "channels_list": [256, 128, 64],
+            "output_lengths": [37, 75, 150]
         }
     },
     "data_loader_train": {
@@ -29,7 +30,7 @@
         "type": "CollisionDataLoader",
         "args": {
             "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0915/packaged_data_test.npz",
-            "batch_size": 256,
+            "batch_size": 32,
             "shuffle": false,
             "validation_split": 0,
             "num_workers": 0,
@@ -41,21 +42,24 @@
     "optimizer": {
         "type": "AdamW",
         "args": {
-            "lr": 3e-4,
+            "lr": 0.0003,
             "weight_decay": 0.0012
         }
     },
-    "loss": {
-        "type": "MultiLoss",
-        "args": {
-            "loss_weights": [1.0, 2.0, 5.0],
-            "base_loss_type": "GaussianNLLLoss",
-            "base_loss_args": {
-                "eps": 1e-6,
-                "reduction": "mean"
+    "loss": [
+        {
+            "type": "MultiLoss",
+            "weight": 1.0,
+            "args": {
+                "loss_weights": [1.0, 2.0, 5.0],
+                "base_loss_type": "GaussianNLLLoss",
+                "base_loss_args": {
+                    "eps": 1e-06,
+                    "reduction": "mean"
+                }
             }
         }
-    },
+    ],
     "metrics": [
         "rmse_x",
         "rmse_y",
@@ -68,13 +72,13 @@
         "type": "CosineAnnealingLR",
         "args": {
             "T_max": 60,
-            "eta_min": 2e-7
+            "eta_min": 2e-07
         }
     },
     "trainer": {
         "epochs": 60,
         "save_dir": "saved/",
-        "save_period": 5,
+        "save_period": 10,
         "verbosity": 2,
         "monitor": "max iso_rating_x",
         "early_stop": 100,

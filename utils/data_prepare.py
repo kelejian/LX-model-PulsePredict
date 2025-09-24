@@ -142,7 +142,7 @@ if __name__ == '__main__':
     # 分割训练集和测试集
     if params_path.suffix == '.csv':  # 
         # all_case_ids = pd.read_csv(params_path)['case_id']
-        is_pulse_ok = pd.read_csv(params_path)['is_pulse_ok']
+        is_pulse_ok = pd.read_csv(params_path)['is_pulse_ok'] # 只选择波形数据OK的工况
         pulse_ok_case_ids = pd.read_csv(params_path).loc[is_pulse_ok == True, 'case_id']
     elif params_path.suffix == '.npz':
         # all_case_ids = np.load(params_path)['case_id']

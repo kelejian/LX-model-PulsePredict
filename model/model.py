@@ -68,13 +68,24 @@ class PulseMLP(BaseModel):
         
         return mean, variance
 
-    def compute_loss(self, model_output, target, criterion):
-        if self.GauNll_use:
-            pred_mean, pred_var = model_output
-            return criterion(pred_mean, pred_var, target) # 注意GaussNLLloss的forward函数签名
-        else:
-            # model_output is just pred_mean
-            return criterion(model_output, target)
+    def compute_loss(self, model_output, target, criterions):
+            total_loss = torch.tensor(0.0, device=target.device)
+            loss_components = {}
+            for criterion_item in criterions:
+                loss_instance = criterion_item['instance']
+                weight = criterion_item['weight']
+                loss_type_name = type(loss_instance).__name__
+                # For MLP, the logic is simpler as it doesn't have multi-scale outputs
+                if self.GauNll_use:
+                    pred_mean, pred_var = model_output
+                    loss = loss_instance(pred_mean, pred_var, target)
+                else:
+                    loss = loss_instance(model_output, target)
+                
+                total_loss += weight * loss
+                loss_components[loss_type_name] = loss.item()
+
+            return total_loss, loss_components
 
     def get_metrics_output(self, model_output):
         if self.GauNll_use:
@@ -127,33 +138,31 @@ class UpsamplingBlock(BaseModel):
     一维残差上采样块 (1D Residual Upsampling Block)。
     采用 'Upsample + Conv1d' 策略替代转置卷积，以避免棋盘效应。
     """
-    def __init__(self, in_channels, out_channels, UpLayer_ks=3, ResLayer_ks=3,  scale_factor=2):
+    def __init__(self, in_channels, out_channels, UpLayer_ks=3, ResLayer_ks=3, target_length=None):
         super().__init__()
-        # 结合了“尺度提升”和“特征变换”的模块
-        self.upsample_conv = nn.Sequential(
-            # 步骤1: 使用非学习性的线性插值进行上采样，保证平滑无伪影
-            nn.Upsample(scale_factor=scale_factor, mode='linear', align_corners=False),
-            # 步骤2: 使用标准卷积对插值后的特征进行可学习的变换
-            nn.Conv1d(in_channels, out_channels, kernel_size=UpLayer_ks, padding='same'),
-        )
-        # 步骤3: 使用残差块进行深度特征精调
+        self.target_length = target_length
+        # 步骤1: 定义一个标准卷积，用于对插值后的特征进行可学习的变换
+        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=UpLayer_ks, padding='same')
+        # 步骤2: 使用残差块进行深度特征精调
         self.res_block = ResBlock1D(out_channels, out_channels, ResLayer_ks)
 
     def forward(self, x):
         """
         前向传播。
-        :param x: 输入特征序列, 形状: (B, C_in, L)
-        :return: 输出特征序列, 形状: (B, C_out, L * scale_factor)
+        :param x: 输入特征序列, 形状: (B, C_in, L_in)
+        :return: 输出特征序列, 形状: (B, C_out, target_length)
         """
-        # x 形状: (B, C_in, L)
-        x = self.upsample_conv(x)  # -> (B, C_out, L * scale_factor)
-        x = self.res_block(x)      # -> (B, C_out, L * scale_factor)
+        # 动作1: 使用非学习性的线性插值上采样到目标长度
+        x = F.interpolate(x, size=self.target_length, mode='linear', align_corners=False)
+        # 动作2: 通过卷积层进行特征变换
+        x = self.conv(x)
+        # 动作3: 通过残差块进行精调
+        x = self.res_block(x)
         return x
-
 
 class PulseCNN_V1(BaseModel):
     """
-    基于1D-CNN的碰撞波形预测模型 (A+B综合方案)。
+    基于1D-CNN的碰撞波形预测模型。
 
     该模型采用层级式多尺度生成架构，其上采样单元为残差精调模块，
     旨在实现从粗到精的“逐步细化预测”。
@@ -238,22 +247,26 @@ class PulseCNN_V1(BaseModel):
         var_preds = [torch.exp(log_var) for log_var in log_var_preds]
         
         return mean_preds, var_preds
-
-# ... (ResBlock1D 和 UpsamplingBlock 的定义保持不变, 予以保留) ...
-
 class PulseCNN(BaseModel):
     """
     基于1D-CNN的碰撞波形预测模型 (V2 - 参数高效版)。
+    该模型采用层级式多尺度生成架构，其上采样单元为残差精调模块，
+    旨在实现从粗到精的“逐步细化预测”。
     """
-    def __init__(self, input_dim=3, output_dim=150, output_channels=3,
+    def __init__(self, input_dim=3, output_channels=3,
                  mlp_latent_dim=256, mlp_num_layers=3,
                  projection_init_channels=16, UpLayer_ks=3, ResLayer_ks=3,
-                 channels_list=[256, 128, 64], scale_factor=2, GauNll_use=True):
+                 channels_list=[256, 128, 64], output_lengths=None, GauNll_use=True):
         super().__init__()
         
-        num_upsamples = len(channels_list) - 1
-        self.initial_length = output_dim // (scale_factor ** num_upsamples)
-        self.output_dim = output_dim
+        # --- 输入参数校验 ---
+        if output_lengths is None:
+            raise ValueError("`output_lengths` must be provided.")
+        if len(channels_list) != len(output_lengths):
+            raise ValueError(f"Length of `channels_list` ({len(channels_list)}) must match length of `output_lengths` ({len(output_lengths)}).")
+
+        self.initial_length = output_lengths[0]
+        self.output_dim = output_lengths[-1]
         self.GauNll_use = GauNll_use
 
         # 1. 输入编码器
@@ -273,9 +286,14 @@ class PulseCNN(BaseModel):
 
         # 3. 多尺度解码器
         self.decoder_blocks = nn.ModuleList()
+        num_upsamples = len(channels_list) - 1
         for i in range(num_upsamples):
             self.decoder_blocks.append(
-                UpsamplingBlock(in_channels=channels_list[i], out_channels=channels_list[i+1], UpLayer_ks=UpLayer_ks, ResLayer_ks=ResLayer_ks, scale_factor=scale_factor)
+                UpsamplingBlock(in_channels=channels_list[i], 
+                              out_channels=channels_list[i+1], 
+                              UpLayer_ks=UpLayer_ks, 
+                              ResLayer_ks=ResLayer_ks, 
+                              target_length=output_lengths[i+1]) # 传递下一阶段的目标长度
             )
 
         # 4. 多尺度输出头
@@ -285,8 +303,6 @@ class PulseCNN(BaseModel):
             if self.GauNll_use:
                 head_modules['log_var'] = nn.Conv1d(channels, output_channels, kernel_size=1)
             self.output_heads.append(nn.ModuleDict(head_modules))
-
-        self.last_length = self.initial_length * (scale_factor ** num_upsamples)
 
     def forward(self, x):
         # 1. 编码与信息融合
@@ -317,38 +333,56 @@ class PulseCNN(BaseModel):
             if self.GauNll_use:
                 log_var = head['log_var'](features)
                 log_var_preds.append(log_var)
-        
-        # 5. 最终长度校正
-        if self.last_length != self.output_dim:
-            mean_preds[-1] = F.interpolate(mean_preds[-1], size=self.output_dim, mode='linear', align_corners=False)
-            if self.GauNll_use:
-                log_var_preds[-1] = F.interpolate(log_var_preds[-1], size=self.output_dim, mode='linear', align_corners=False)
 
         if not self.GauNll_use:
             return mean_preds
-            
-        # 6. 计算方差
-        var_preds = [torch.exp(log_var) for log_var in log_var_preds]
-        return mean_preds, var_preds
-
-    def compute_loss(self, model_output, target, criterion):
-        """
-        准备多尺度预测和目标，并调用criterion计算损失。
-        """
-        if self.GauNll_use:
-            pred_mean_list, pred_var_list = model_output
-            # 将均值和方差列表打包成criterion期望的格式
-            pred_list = list(zip(pred_mean_list, pred_var_list))
         else:
-            pred_mean_list = model_output
-            pred_list = pred_mean_list
-        
-        # 为每个尺度的预测准备对应的目标
-        target_list = [F.interpolate(target, size=pred_mean.shape[-1], mode='linear', align_corners=False) for pred_mean in pred_mean_list]
-        target_list[-1] = target # 最后为原始尺度的真值
+            var_preds = [torch.exp(log_var) for log_var in log_var_preds]
+            return mean_preds, var_preds
 
-        # 调用criterion（现在是MultiLoss实例）计算总损失
-        return criterion(pred_list, target_list)
+    def compute_loss(self, model_output, target, criterions):
+            """
+            准备多尺度预测和目标，并调用criterions计算加权总损失。
+            返回总损失和一个包含各分量损失的字典。
+            """
+            total_loss = torch.tensor(0.0, device=target.device)
+            loss_components = {}
+            # --- 准备通用的输入 ---
+            if self.GauNll_use:
+                pred_mean_list, pred_var_list = model_output
+                pred_list_for_multiloss = list(zip(pred_mean_list, pred_var_list))
+            else:
+                pred_mean_list = model_output
+                pred_list_for_multiloss = pred_mean_list
+            
+            # 为每个尺度的预测准备对应的目标
+            target_list = [F.interpolate(target, size=pred_mean.shape[-1], mode='linear', align_corners=False) for pred_mean in pred_mean_list]
+            target_list[-1] = target # 最后为原始尺度的真值
+            # 如果最后一个尺度的长度与真值长度不符，则报错
+            if target_list[-1].shape[-1] != self.output_dim:
+                raise ValueError(f"最后一个尺度的长度 {target_list[-1].shape[-1]} 与真值长度 {self.output_dim} 不符")
+
+            # --- 遍历所有损失函数并计算加权和 ---
+            for criterion_item in criterions:
+                loss_instance = criterion_item['instance']
+                weight = criterion_item['weight']
+                loss_type_name = type(loss_instance).__name__
+
+                # --- 核心逻辑: 根据损失类型，传递不同的参数 ---
+                if loss_type_name == 'MultiLoss':
+                    loss = loss_instance(pred_list_for_multiloss, target_list)
+                # 示例：未来可在此处为其他loss添加elif分支
+                # elif loss_type_name == 'YourFuturePhysicsLoss':
+                #     loss = loss_instance(...)
+                else:
+                    # 提供一个默认行为给简单的、非多尺度的损失函数
+                    final_pred = self.get_metrics_output(model_output)
+                    loss = loss_instance(final_pred, target)
+
+                total_loss += weight * loss
+                loss_components[loss_type_name] = loss.item()
+
+            return total_loss, loss_components
 
     def get_metrics_output(self, model_output):
         if self.GauNll_use:

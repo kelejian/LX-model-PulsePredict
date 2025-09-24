@@ -26,9 +26,12 @@ class Trainer(BaseTrainer):
         
         len_epoch = len(self.data_loader)
         self.log_step = max(1, len_epoch // 5)
+        
+        # +++ 从配置中动态获取各项loss的名称用于监控 +++
+        loss_names_to_track = [type(item['instance']).__name__ for item in self.criterion]
 
-        self.train_metrics = MetricTracker('loss', *[m.__name__ for m in self.metric_ftns], writer=self.writer)
-        self.valid_metrics = MetricTracker('loss', *[m.__name__ for m in self.metric_ftns], writer=self.writer)
+        self.train_metrics = MetricTracker('loss', *loss_names_to_track, *[m.__name__ for m in self.metric_ftns], writer=self.writer)
+        self.valid_metrics = MetricTracker('loss', *loss_names_to_track, *[m.__name__ for m in self.metric_ftns], writer=self.writer)
 
     def _train_epoch(self, epoch):
         """
@@ -44,13 +47,16 @@ class Trainer(BaseTrainer):
             self.optimizer.zero_grad()
             
             output = self.model(data)
-            loss = self.model.compute_loss(output, target, self.criterion)
-            
+            loss, loss_components = self.model.compute_loss(output, target, self.criterion)
+
             loss.backward()
             self.optimizer.step()
 
             self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
+            # 更新总损失和各项损失到MetricTracker
             self.train_metrics.update('loss', loss.item())
+            for loss_name, loss_val in loss_components.items():
+                self.train_metrics.update(loss_name, loss_val)
 
             # Get the primary model output for metrics calculation
             metrics_output = self.model.get_metrics_output(output)
@@ -89,10 +95,13 @@ class Trainer(BaseTrainer):
                 data, target = data.to(self.device), target.to(self.device)
 
                 output = self.model(data)
-                loss = self.model.compute_loss(output, target, self.criterion)
+                loss, loss_components = self.model.compute_loss(output, target, self.criterion)
 
                 self.writer.set_step((epoch - 1) * len(self.valid_data_loader) + batch_idx, 'valid')
+                # 更新总损失和各项损失到MetricTracker
                 self.valid_metrics.update('loss', loss.item())
+                for loss_name, loss_val in loss_components.items():
+                    self.valid_metrics.update(loss_name, loss_val)
                 
                 metrics_output = self.model.get_metrics_output(output)
                 metrics_output_orig, target_orig = inverse_transform(metrics_output, target, scaler)
