@@ -135,9 +135,9 @@ def package_pulse_data(pulse_dir, params_path, case_id_list, output_path):
 
 if __name__ == '__main__':
     from pathlib import Path
-    pulse_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\acc_data_before0915')
-    params_path = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\distribution_0917.csv')
-    output_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\acc_data_before0915')
+    pulse_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\acc_data_before0922')
+    params_path = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\distribution\distribution_0924.csv')
+    output_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\acc_data_before0922')
 
     # 分割训练集和测试集
     if params_path.suffix == '.csv':  # 

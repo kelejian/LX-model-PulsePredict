@@ -50,7 +50,8 @@ def main(config):
             loss_instance = getattr(module_loss, loss_module_name)(**loss_module_args)
             loss_fns.append({
                 'instance': loss_instance,
-                'weight': loss_spec.get('weight', 1.0)
+                'weight': loss_spec.get('weight', 1.0),
+                'channel_weights': loss_spec.get('channel_weights', [1.0, 1.0, 1.0])
             })
     else:
         # 兼容旧格式的配置文件

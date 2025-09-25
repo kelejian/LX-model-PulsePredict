@@ -16,7 +16,7 @@
     "data_loader_train": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0915/packaged_data_train.npz",
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0922/packaged_data_train.npz",
             "batch_size": 512,
             "shuffle": true,
             "validation_split": 0,
@@ -29,7 +29,7 @@
     "data_loader_test": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0915/packaged_data_test.npz",
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0922/packaged_data_test.npz",
             "batch_size": 32,
             "shuffle": false,
             "validation_split": 0,
@@ -46,11 +46,12 @@
             "weight_decay": 0.0012
         }
     },
+
     "loss": [
         {
             "type": "MultiLoss",
-            "weight": 1.0,
-            "channel_weights": [1.0, 1.0, 1.0], 
+            "weight": 0.5,
+            "channel_weights": [1.0, 0.5, 0.1], 
             "args": {
                 "loss_weights": [1.0, 2.0, 5.0],
                 "base_loss_type": "GaussianNLLLoss",
@@ -59,8 +60,45 @@
                     "reduction": "mean"
                 }
             }
+        },
+        {
+            "type": "CorridorLoss",
+            "weight": 0.5,
+            "channel_weights": [1.0, 0.5, 0.1],
+            "args": {
+                "inner_corridor_width": 0.05,
+                "exponent": 2.0
+            }
+        },
+        {
+            "type": "SlopeLoss",
+            "weight": 2.0,
+            "channel_weights": [1.0, 0.5, 0.1],
+            "args": {
+                "reduction": "mean"
+            }
+        },
+        {
+            "type": "PhaseLoss",
+            "weight": 0.5,
+            "channel_weights": [1.0, 0.5, 0.1],
+            "args": {
+                "n_fft": 64,
+                "hop_length": 16,
+                "win_length": 64
+            }
+        },
+        {
+            "type": "InitialLoss",
+            "weight": 0.2, 
+            "channel_weights": [1.0, 0.5, 0.1],
+            "args": {
+                "percentage": 0.05,
+                "loss_type": "mae"
+            }
         }
     ],
+
     "metrics": [
         "rmse_x",
         "rmse_y",

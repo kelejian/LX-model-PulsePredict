@@ -280,7 +280,7 @@ class PulseCNN(BaseModel):
     def compute_loss(self, model_output, target, criterions):
             """
             准备多尺度预测和目标，并调用criterions计算加权总损失。
-            此版本采用统一的通道加权逻辑。
+            此版本修复了非多尺度损失（如CorridorLoss）的输入张量尺寸问题。
             返回总损失和一个包含各分量损失的字典。
             """
             total_loss = torch.tensor(0.0, device=target.device)
@@ -303,27 +303,36 @@ class PulseCNN(BaseModel):
                     if channel_weights[i] == 0:
                         continue
 
-                    # --- 为每个通道准备输入 ---
-                    target_channel = target[:, i:i+1, :]
-                    
-                    if self.GauNll_use:
-                        pred_mean_list, pred_var_list = model_output
-                        pred_mean_channel = [p[:, i:i+1, :] for p in pred_mean_list]
-                        pred_var_channel = [v[:, i:i+1, :] for v in pred_var_list]
-                        # +++ BUG修复：将两个列表打包成一个元组列表 +++
-                        pred_channel = list(zip(pred_mean_channel, pred_var_channel))
-                    else:
-                        pred_mean_list = model_output
-                        pred_mean_channel = [p[:, i:i+1, :] for p in pred_mean_list]
-                        pred_channel = pred_mean_channel
+                    target_channel = target[:, i:i+1, :] # 目标通道，长度为150
 
                     # --- 区分不同loss类型的计算 ---
                     if isinstance(loss_instance, module_loss.MultiLoss):
+                        # 为 MultiLoss 准备多尺度的单通道预测
+                        if self.GauNll_use:
+                            pred_mean_list, pred_var_list = model_output
+                            pred_mean_channel = [p[:, i:i+1, :] for p in pred_mean_list]
+                            pred_var_channel = [v[:, i:i+1, :] for v in pred_var_list]
+                            pred_channel = list(zip(pred_mean_channel, pred_var_channel))
+                        else:
+                            pred_mean_list = model_output
+                            pred_channel = [p[:, i:i+1, :] for p in pred_mean_list]
+                        
+                        # 为 MultiLoss 准备多尺度的单通道目标
                         target_list_channel = [F.interpolate(target_channel, size=p[0].shape[-1] if self.GauNll_use else p.shape[-1], mode='linear', align_corners=False) for p in pred_channel]
                         target_list_channel[-1] = target_channel
+                        
                         channel_loss = loss_instance(pred_channel, target_list_channel)
+                    
                     else:
-                        final_pred_for_channel = self.get_metrics_output(pred_channel[0]) if self.GauNll_use else self.get_metrics_output(pred_channel)
+                        # 为 CorridorLoss 等非多尺度损失，显式地提取最终预测结果的单通道
+                        if self.GauNll_use:
+                            # model_output[0] 是 pred_mean_list, [-1] 是最后一个尺度的预测
+                            final_pred_for_channel = model_output[0][-1][:, i:i+1, :]
+                        else:
+                            # model_output 是 pred_mean_list, [-1] 是最后一个尺度的预测
+                            final_pred_for_channel = model_output[-1][:, i:i+1, :]
+                        
+                        # 此处 final_pred_for_channel 的长度是150，与 target_channel 长度一致
                         channel_loss = loss_instance(final_pred_for_channel, target_channel)
 
                     current_loss_item += channel_weights[i] * channel_loss
