@@ -55,7 +55,8 @@ def main(config):
             loss_instance = getattr(module_loss, loss_module_name)(**loss_module_args)
             criterions.append({
                 'instance': loss_instance,
-                'weight': loss_spec.get('weight', 1.0) # Default weight is 1.0
+                'weight': loss_spec.get('weight', 1.0),  # Default weight is 1.0
+                'channel_weights': loss_spec.get('channel_weights',  [1, 1, 1])  # Default channel weights is [1, 1, 1]
             })
     else:
         # Fallback for old config format for compatibility

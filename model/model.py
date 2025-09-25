@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from base import BaseModel
-
+import model.loss as module_loss
 from torch_geometric.nn import MLP as PygMLP # 直接用PyG的MLP模块
 
 class PulseMLP(BaseModel):
@@ -69,19 +69,44 @@ class PulseMLP(BaseModel):
         return mean, variance
 
     def compute_loss(self, model_output, target, criterions):
+            """
+            计算MLP模型的加权总损失，采用统一的通道加权逻辑。
+            """
             total_loss = torch.tensor(0.0, device=target.device)
             loss_components = {}
+
             for criterion_item in criterions:
                 loss_instance = criterion_item['instance']
                 weight = criterion_item['weight']
+                channel_weights = criterion_item['channel_weights']
                 loss_type_name = type(loss_instance).__name__
-                # For MLP, the logic is simpler as it doesn't have multi-scale outputs
-                if self.GauNll_use:
-                    pred_mean, pred_var = model_output
-                    loss = loss_instance(pred_mean, pred_var, target)
-                else:
-                    loss = loss_instance(model_output, target)
+
+                if not channel_weights or len(channel_weights) != target.shape[1]:
+                    raise ValueError(f"'{loss_type_name}' 的 channel_weights ({channel_weights}) 必须是一个包含 {target.shape[1]} 个元素的列表。")
+
+                current_loss_item = torch.tensor(0.0, device=target.device)
                 
+                for i in range(len(channel_weights)):
+                    if channel_weights[i] == 0:
+                        continue
+
+                    target_channel = target[:, i:i+1, :]
+                    
+                    if self.GauNll_use:
+                        pred_mean, pred_var = model_output
+                        pred_mean_channel = pred_mean[:, i:i+1, :]
+                        pred_var_channel = pred_var[:, i:i+1, :]
+                        # +++ BUG修复：将两个张量打包成一个元组 +++
+                        pred_channel = (pred_mean_channel, pred_var_channel)
+                    else:
+                        pred_channel = model_output[:, i:i+1, :]
+                    
+                    channel_loss = loss_instance(pred_channel, target_channel)
+
+                    current_loss_item += channel_weights[i] * channel_loss
+
+                loss = current_loss_item / sum(channel_weights) if sum(channel_weights) > 0 else torch.tensor(0.0, device=target.device)
+
                 total_loss += weight * loss
                 loss_components[loss_type_name] = loss.item()
 
@@ -159,97 +184,9 @@ class UpsamplingBlock(BaseModel):
         # 动作3: 通过残差块进行精调
         x = self.res_block(x)
         return x
-
-class PulseCNN_V1(BaseModel):
-    """
-    基于1D-CNN的碰撞波形预测模型。
-
-    该模型采用层级式多尺度生成架构，其上采样单元为残差精调模块，
-    旨在实现从粗到精的“逐步细化预测”。
-    """
-    def __init__(self, input_dim=3, output_dim=150, output_channels=3, 
-                 mlp_latent_dim=256, mlp_num_layers=2, 
-                 channels_list=[256, 128, 64, 32], scale_factor=2 ):
-        super().__init__()
-        
-        # 动态计算解码器所需的初始序列长度
-        num_upsamples = len(channels_list) - 1
-        self.initial_length = output_dim // (scale_factor ** num_upsamples)
-        self.output_dim = output_dim
-
-        # 1. 输入编码器: 将工况参数映射为潜在向量
-        self.encoder = PygMLP(
-            in_channels=input_dim,
-            hidden_channels=mlp_latent_dim,
-            out_channels=channels_list[0] * self.initial_length,
-            num_layers=mlp_num_layers,
-            norm="batch_norm",
-            act="leaky_relu",
-            plain_last=False,  # 对输入编码器的最后一层也应用激活和归一化
-            dropout=0.1
-        )
-        self.initial_shape = (channels_list[0], self.initial_length)
-
-        # 2. 多尺度解码器: 由一系列残差上采样块构成
-        self.decoder_blocks = nn.ModuleList()
-        for i in range(num_upsamples):
-            self.decoder_blocks.append(
-                UpsamplingBlock(in_channels=channels_list[i], out_channels=channels_list[i+1], UpLayer_ks=1, scale_factor=scale_factor)
-            )
-
-        # 3. 多尺度输出头: 在每个尺度上生成波形预测
-        self.output_heads = nn.ModuleList()
-        for channels in channels_list:
-            head = nn.ModuleDict({
-                'mean': nn.Conv1d(channels, output_channels, kernel_size=1),
-                'log_var': nn.Conv1d(channels, output_channels, kernel_size=1)
-            })
-            self.output_heads.append(head)
-
-        self.last_length = self.initial_length * (scale_factor ** num_upsamples)
-
-    def forward(self, x):
-        """
-        前向传播函数。
-        :param x: 输入张量，形状为 (B, 3)。
-        :return: 一个元组，包含两个列表 (mean_preds, var_preds)，
-                 每个列表都包含了从粗到精的多个尺度的预测。
-        """
-        # --- 1. 编码与重塑 ---
-        # x 形状: (B, 3)
-        z = self.encoder(x)  # -> (B, C_0 * L_0)
-        z = z.view(-1, *self.initial_shape) # -> (B, C_0, L_0)
-
-        # --- 2. 解码与多尺度特征提取 ---
-        features_list = [z]
-        for block in self.decoder_blocks:
-            z = block(z)
-            features_list.append(z)
-        # features_list 包含了每个尺度的特征, 形状为:
-        # [(B, C_0, L_0), (B, C_1, L_1), ..., (B, C_n, L_n)]
-
-        # --- 3. 多尺度预测 ---
-        mean_preds = []
-        log_var_preds = []
-        for features, head in zip(features_list, self.output_heads):
-            # features 形状: (B, C_i, L_i)
-            mean = head['mean'](features)      # -> (B, output_channels, L_i)
-            log_var = head['log_var'](features)  # -> (B, output_channels, L_i)
-            mean_preds.append(mean)
-            log_var_preds.append(log_var)
-        
-        # --- 4. 最终长度校正 ---
-        if self.last_length != self.output_dim:
-            mean_preds[-1] = F.interpolate(mean_preds[-1], size=self.output_dim, mode='linear', align_corners=False)
-            log_var_preds[-1] = F.interpolate(log_var_preds[-1], size=self.output_dim, mode='linear', align_corners=False)
-
-        # --- 5. 计算方差 ---
-        var_preds = [torch.exp(log_var) for log_var in log_var_preds]
-        
-        return mean_preds, var_preds
 class PulseCNN(BaseModel):
     """
-    基于1D-CNN的碰撞波形预测模型 (V2 - 参数高效版)。
+    基于1D-CNN的碰撞波形预测模型。
     该模型采用层级式多尺度生成架构，其上采样单元为残差精调模块，
     旨在实现从粗到精的“逐步细化预测”。
     """
@@ -343,41 +280,55 @@ class PulseCNN(BaseModel):
     def compute_loss(self, model_output, target, criterions):
             """
             准备多尺度预测和目标，并调用criterions计算加权总损失。
+            此版本采用统一的通道加权逻辑。
             返回总损失和一个包含各分量损失的字典。
             """
             total_loss = torch.tensor(0.0, device=target.device)
             loss_components = {}
-            # --- 准备通用的输入 ---
-            if self.GauNll_use:
-                pred_mean_list, pred_var_list = model_output
-                pred_list_for_multiloss = list(zip(pred_mean_list, pred_var_list))
-            else:
-                pred_mean_list = model_output
-                pred_list_for_multiloss = pred_mean_list
-            
-            # 为每个尺度的预测准备对应的目标
-            target_list = [F.interpolate(target, size=pred_mean.shape[-1], mode='linear', align_corners=False) for pred_mean in pred_mean_list]
-            target_list[-1] = target # 最后为原始尺度的真值
-            # 如果最后一个尺度的长度与真值长度不符，则报错
-            if target_list[-1].shape[-1] != self.output_dim:
-                raise ValueError(f"最后一个尺度的长度 {target_list[-1].shape[-1]} 与真值长度 {self.output_dim} 不符")
 
             # --- 遍历所有损失函数并计算加权和 ---
             for criterion_item in criterions:
                 loss_instance = criterion_item['instance']
                 weight = criterion_item['weight']
+                channel_weights = criterion_item['channel_weights']
                 loss_type_name = type(loss_instance).__name__
+                
+                if not channel_weights or len(channel_weights) != target.shape[1]:
+                    raise ValueError(f"'{loss_type_name}' 的 channel_weights ({channel_weights}) 必须是一个包含 {target.shape[1]} 个元素的列表。")
 
-                # --- 核心逻辑: 根据损失类型，传递不同的参数 ---
-                if loss_type_name == 'MultiLoss':
-                    loss = loss_instance(pred_list_for_multiloss, target_list)
-                # 示例：未来可在此处为其他loss添加elif分支
-                # elif loss_type_name == 'YourFuturePhysicsLoss':
-                #     loss = loss_instance(...)
-                else:
-                    # 提供一个默认行为给简单的、非多尺度的损失函数
-                    final_pred = self.get_metrics_output(model_output)
-                    loss = loss_instance(final_pred, target)
+                current_loss_item = torch.tensor(0.0, device=target.device)
+                
+                # --- 统一的通道加权计算逻辑 ---
+                for i in range(len(channel_weights)):
+                    if channel_weights[i] == 0:
+                        continue
+
+                    # --- 为每个通道准备输入 ---
+                    target_channel = target[:, i:i+1, :]
+                    
+                    if self.GauNll_use:
+                        pred_mean_list, pred_var_list = model_output
+                        pred_mean_channel = [p[:, i:i+1, :] for p in pred_mean_list]
+                        pred_var_channel = [v[:, i:i+1, :] for v in pred_var_list]
+                        # +++ BUG修复：将两个列表打包成一个元组列表 +++
+                        pred_channel = list(zip(pred_mean_channel, pred_var_channel))
+                    else:
+                        pred_mean_list = model_output
+                        pred_mean_channel = [p[:, i:i+1, :] for p in pred_mean_list]
+                        pred_channel = pred_mean_channel
+
+                    # --- 区分不同loss类型的计算 ---
+                    if isinstance(loss_instance, module_loss.MultiLoss):
+                        target_list_channel = [F.interpolate(target_channel, size=p[0].shape[-1] if self.GauNll_use else p.shape[-1], mode='linear', align_corners=False) for p in pred_channel]
+                        target_list_channel[-1] = target_channel
+                        channel_loss = loss_instance(pred_channel, target_list_channel)
+                    else:
+                        final_pred_for_channel = self.get_metrics_output(pred_channel[0]) if self.GauNll_use else self.get_metrics_output(pred_channel)
+                        channel_loss = loss_instance(final_pred_for_channel, target_channel)
+
+                    current_loss_item += channel_weights[i] * channel_loss
+                
+                loss = current_loss_item / sum(channel_weights) if sum(channel_weights) > 0 else torch.tensor(0.0, device=target.device)
 
                 total_loss += weight * loss
                 loss_components[loss_type_name] = loss.item()
