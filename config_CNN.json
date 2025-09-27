@@ -16,7 +16,7 @@
     "data_loader_train": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0922/packaged_data_train.npz",
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0924/packaged_data_train.npz",
             "batch_size": 512,
             "shuffle": true,
             "validation_split": 0,
@@ -29,7 +29,7 @@
     "data_loader_test": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0922/packaged_data_test.npz",
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/acc_data_before0924/packaged_data_test.npz",
             "batch_size": 32,
             "shuffle": false,
             "validation_split": 0,
@@ -50,7 +50,7 @@
     "loss": [
         {
             "type": "MultiLoss",
-            "weight": 0.5,
+            "weight": 0.7,
             "channel_weights": [1.0, 0.5, 0.1], 
             "args": {
                 "loss_weights": [1.0, 2.0, 5.0],
@@ -63,7 +63,7 @@
         },
         {
             "type": "CorridorLoss",
-            "weight": 0.5,
+            "weight": 1.0,
             "channel_weights": [1.0, 0.5, 0.1],
             "args": {
                 "inner_corridor_width": 0.05,
@@ -72,7 +72,7 @@
         },
         {
             "type": "SlopeLoss",
-            "weight": 2.0,
+            "weight": 1.6,
             "channel_weights": [1.0, 0.5, 0.1],
             "args": {
                 "reduction": "mean"
@@ -80,7 +80,7 @@
         },
         {
             "type": "PhaseLoss",
-            "weight": 0.5,
+            "weight": 1.3,
             "channel_weights": [1.0, 0.5, 0.1],
             "args": {
                 "n_fft": 64,
@@ -90,10 +90,21 @@
         },
         {
             "type": "InitialLoss",
-            "weight": 0.2, 
+            "weight": 0.35, 
             "channel_weights": [1.0, 0.5, 0.1],
             "args": {
-                "percentage": 0.05,
+                "percentage": 0.04,
+                "weight_target": 0.5,
+                "loss_type": "mae"
+            }
+        },
+        {
+            "type": "TerminalLoss",
+            "weight": 0.1,
+            "channel_weights": [0.05, 0.5, 1.0],
+            "args": {
+                "percentage": 0.04,
+                "weight_target": 2.0,
                 "loss_type": "mae"
             }
         }
@@ -110,12 +121,12 @@
     "lr_scheduler": {
         "type": "CosineAnnealingLR",
         "args": {
-            "T_max": 60,
-            "eta_min": 2e-07
+            "T_max": 80,
+            "eta_min": 5e-08
         }
     },
     "trainer": {
-        "epochs": 60,
+        "epochs": 80,
         "save_dir": "saved/",
         "save_period": 10,
         "verbosity": 2,

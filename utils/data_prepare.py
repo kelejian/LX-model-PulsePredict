@@ -135,9 +135,9 @@ def package_pulse_data(pulse_dir, params_path, case_id_list, output_path):
 
 if __name__ == '__main__':
     from pathlib import Path
-    pulse_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\acc_data_before0922')
-    params_path = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\distribution\distribution_0924.csv')
-    output_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\acc_data_before0922')
+    pulse_dir = Path(r'F:\VCS_acc_data\acc_data_before0924_2176')
+    params_path = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\distribution\distribution_0926_V3.csv')
+    output_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\acc_data_before0924')
 
     # 分割训练集和测试集
     if params_path.suffix == '.csv':  # 
@@ -152,7 +152,7 @@ if __name__ == '__main__':
         raise ValueError("参数文件必须是 .csv 或 .npz 格式。")
     
     all_case_ids = pulse_ok_case_ids.tolist()
-    print(f"总共有 {len(all_case_ids)} 个工况脉冲数据 OK。")
+    print(f"*** 总共有 {len(all_case_ids)} 个工况波形数据 OK ***")
     np.random.shuffle(all_case_ids)
     num_train = int(len(all_case_ids) / 6 * 5)
     train_case_ids = all_case_ids[:num_train]

@@ -109,10 +109,11 @@ class InitialLoss(nn.Module):
     该损失函数惩罚预测波形在最开始一小段时间内（由 percentage 定义）
     偏离零的程度，鼓励模型生成更符合物理现实的、平稳启动的波形。
     """
-    def __init__(self, percentage=0.05, loss_type='mae', reduction='mean'):
+    def __init__(self, percentage=0.05, weight_target=0, loss_type='mae', reduction='mean'):
         """
         :param percentage: 一个 0 到 1 之间的小数，定义了需要约束的波形初始部分的比例。
                            默认为 0.05，即前 5% 的时间点。
+        :param weight_target: 目标损失的权重。如果为 0，则不计算目标损失。
         :param loss_type: 使用的损失类型，'mae' (L1) 或 'mse' (L2)。
                           MAE 对异常值更鲁棒，通常是更好的选择。
         :param reduction: 指定如何聚合损失，'mean' 或 'sum'。
@@ -124,6 +125,7 @@ class InitialLoss(nn.Module):
             raise ValueError("`loss_type` 必须是 'mae' 或 'mse'。")
             
         self.percentage = percentage
+        self.weight_target = weight_target
         self.loss_type = loss_type
         self.reduction = reduction
 
@@ -152,6 +154,15 @@ class InitialLoss(nn.Module):
         else: # mse
             loss = torch.pow(initial_segment, 2)
 
+        # --- 3.5 计算该部分与目标的差异 (可选) , 因为有时候真值波形初始部分不一定完全在0附近 ---
+        if target is not None:
+            initial_target_segment = target[:, :, :num_points_to_penalize]
+            if self.loss_type == 'mae':
+                target_loss = torch.abs(initial_target_segment)
+            else:
+                target_loss = torch.pow(initial_target_segment, 2)
+            loss = loss + self.weight_target * target_loss
+
         # --- 4. 聚合损失 ---
         if self.reduction == 'mean':
             return loss.mean()
@@ -160,6 +171,74 @@ class InitialLoss(nn.Module):
         else:
             raise ValueError(f"不支持的 reduction 类型: {self.reduction}")
 
+class TerminalLoss(nn.Module):
+    """
+    一个用于约束波形终端阶段稳定性的损失函数。
+
+    该损失函数惩罚预测波形在最后一段时间内（由 percentage 定义）
+    偏离零的程度，用于抑制模型在序列末端产生不切实际的跳变。
+    """
+    def __init__(self, percentage=0.05, weight_target=1.0, loss_type='mae', reduction='mean'):
+        """
+        :param percentage: 一个 0 到 1 之间的小数，定义了需要约束的波形末尾部分的比例。
+                           默认为 0.05，即最后 5% 的时间点。
+        :param weight_target: 目标损失的权重。如果为 0，则不计算目标损失。
+        :param loss_type: 使用的损失类型，'mae' (L1) 或 'mse' (L2)。
+        :param reduction: 指定如何聚合损失，'mean' 或 'sum'。
+        """
+        super().__init__()
+        if not 0 < percentage <= 1:
+            raise ValueError("`percentage` 必须在 (0, 1] 范围内。")
+        if loss_type not in ['mae', 'mse']:
+            raise ValueError("`loss_type` 必须是 'mae' 或 'mse'。")
+            
+        self.percentage = percentage
+        self.weight_target = weight_target
+        self.loss_type = loss_type
+        self.reduction = reduction
+
+    def forward(self, pred, target=None):
+        """
+        计算终端段损失。
+
+        :param pred: 模型的预测输出张量, 形状 (B, C, L)。
+        :param target: 目标张量 (在此损失中未使用)。
+        :return: 计算出的标量损失值。
+        """
+        # --- 1. 计算需要约束的时间点数量 ---
+        seq_len = pred.shape[-1]
+        num_points_to_penalize = int(seq_len * self.percentage)
+
+        if num_points_to_penalize == 0:
+            return torch.tensor(0.0, device=pred.device)
+
+        # --- 2. 提取波形的末尾部分 ---
+        # 使用负索引来从后往前切片
+        terminal_segment = pred[:, :, -num_points_to_penalize:]
+
+        # --- 3. 计算该部分与零的差异 ---
+        if self.loss_type == 'mae':
+            loss = torch.abs(terminal_segment)
+        else: # mse
+            loss = torch.pow(terminal_segment, 2)
+
+        # --- 3.5 计算该部分与目标的差异 (可选)，因为有时候真值波形末尾不一定完全在0附近 ---
+        if target is not None:
+            terminal_target_segment = target[:, :, -num_points_to_penalize:]
+            if self.loss_type == 'mae':
+                target_loss = torch.abs(terminal_target_segment)
+            else:
+                target_loss = torch.pow(terminal_target_segment, 2)
+            loss = loss + self.weight_target * target_loss
+
+        # --- 4. 聚合损失 ---
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:
+            raise ValueError(f"不支持的 reduction 类型: {self.reduction}")
+        
 # 基于ISO-Rating的Loss设计
 class CorridorLoss(nn.Module):
     """
@@ -192,7 +271,7 @@ class CorridorLoss(nn.Module):
         # --- 1. 计算内廊道边界 (delta_i)，与 ISO 公式 (6.3) 和 (6.4) 对应 ---
         # 为了稳定性，在 batch 维度上独立计算每个样本的 t_norm
         # keepdim=True 确保 t_norm 的形状为 (B, C, 1)，以便进行广播
-        t_norm = torch.max(torch.abs(target), dim=-1, keepdim=True)[0]
+        t_norm = torch.max(torch.abs(target), dim=-1, keepdim=True)[0] # 当 torch.max 带有 dim 参数时，它返回一个包含两个张量的元组：(values, indices); Shape (B, C, 1)
         
         # 增加一个小的 epsilon 防止 t_norm 为零导致 delta_i 为零
         delta_i = self.inner_corridor_width * (t_norm + 1e-9)
@@ -216,6 +295,7 @@ class CorridorLoss(nn.Module):
             return loss.sum()
         else:
             raise ValueError(f"不支持的 reduction 类型: {self.reduction}")
+        
 class SlopeLoss(nn.Module):
     """
     一个可微分的代理损失函数，用于模拟 ISO 标准中的斜率评分。
@@ -257,6 +337,7 @@ class SlopeLoss(nn.Module):
             return loss.sum()
         else:
             raise ValueError(f"不支持的 reduction 类型: {self.reduction}")
+        
 class PhaseLoss(nn.Module):
     """
     一个可微分的代理损失函数，用于模拟 ISO 标准中的相位评分。
