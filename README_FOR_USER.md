@@ -163,7 +163,7 @@ LX-model-dev/
 ├── data_loader/      # 数据加载相关模块
 ├── logger/           # 日志和可视化模块
 ├── model/            # 模型架构、损失函数、评估指标
-├── saved/            # 存放所有实验结果的默认目录
+├── saved/            # 存放所有日志、实验结果的默认目录; 包括超参配置(config.json)、最佳模型权重.pth文件(model_best.pth)！
 ├── trainer/          # 训练器实现
 ├── utils/            # 辅助工具函数
 ├── config.json       # 主配置文件

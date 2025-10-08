@@ -8,12 +8,17 @@ import model.loss as module_loss
 import model.metric as module_metric
 import model.model as module_arch
 from parse_config import ConfigParser
+from model.metric import ISORating # 导入 ISORating 类用于计算
 from utils import inverse_transform, plot_waveform_comparison, InputScaler
 from pathlib import Path
 import numpy as np
 
 def main(config):
     logger = config.get_logger('test')
+
+    # --- 0. 定义绘图配置 ---
+    PLOT_ISO_RATINGS_IN_TITLE = True # 设置为 True 以在标题中显示ISO-rating
+    logger.info(f"绘图标题中是否显示ISO-rating: {PLOT_ISO_RATINGS_IN_TITLE}")
 
     # --- 1. 定义分组评估配置 ---
     grouping_config = {
@@ -26,7 +31,19 @@ def main(config):
         }
     }
     logger.info(f"将根据参数 '{grouping_config['param_name']}' 的不同范围对测试结果进行分组统计。")
-    # ---------------------------
+    
+    # --- 2. 定义特定组合工况评估配置 ---
+    specific_case_config = {
+        'small_angle_large_overlap': {
+            'description': "小角度(|ang|<=15) & 大重叠率(|ov|>=0.75)",
+            'conditions': [
+                {'param_index': 1, 'type': 'abs_range', 'range': [0, 15]},    # 条件1: 角度绝对值在[0, 15]度
+                {'param_index': 2, 'type': 'abs_range', 'range': [0.75, 1.0]}  # 条件2: 重叠率绝对值在[0.75, 1.0]
+            ]
+        },
+    }
+    logger.info(f"将根据特定输入参数组合对测试结果进行额外评估。")
+    # ---------------------------------------------
 
     # setup data_loader instances
     data_loader = config.init_obj('data_loader_test', module_data)
@@ -107,8 +124,8 @@ def main(config):
             all_targets_orig.append(target_orig.cpu())
 
             # ------------------------------画图----------------------------------
-            if batch_idx == 2:
-                plot_samples(data, batch_idx, pred_mean_orig, target_orig, case_ids, input_scaler, config, logger)
+            if batch_idx == 1:
+                plot_samples(data, batch_idx, pred_mean_orig, target_orig, case_ids, input_scaler, config, logger, plot_iso_ratings=PLOT_ISO_RATINGS_IN_TITLE)
             # --------------------------------------------------------------------
 
     # 将列表中的批次拼接成一个大的张量/数组
@@ -145,13 +162,55 @@ def main(config):
         
         evaluate_subset(subset_preds, subset_targets, subset_losses, metric_fns, logger, f"样本数: {len(indices)}")
 
-def plot_samples(data, batch_idx, pred_mean_orig, target_orig, case_ids, input_scaler, config, logger):
+    # --- 4. 对特定组合工况数据进行评估 ---
+    for case_name, config_item in specific_case_config.items():
+        title = f" 特定工况评估: {config_item['description']} "
+        logger.info("\n" + "="*50)
+        logger.info(title.center(50, "="))
+        logger.info("="*50)
+
+        # 初始化一个全为 True 的布尔掩码，代表所有样本
+        combined_mask = np.full(all_raw_params.shape[0], True)
+
+        # 逐个应用定义好的条件，通过逻辑与(&)操作来更新掩码
+        for cond in config_item['conditions']:
+            param_index = cond['param_index']
+            cond_type = cond['type']
+            min_val, max_val = cond['range']
+
+            param_to_check = all_raw_params[:, param_index]
+
+            if cond_type == 'abs_range':
+                # 对参数的绝对值进行范围筛选
+                current_mask = (np.abs(param_to_check) >= min_val) & (np.abs(param_to_check) <= max_val)
+            else: # 默认为 'range'
+                # 直接对参数原值进行范围筛选
+                current_mask = (param_to_check >= min_val) & (param_to_check <= max_val)
+            
+            combined_mask &= current_mask
+        
+        # 找到最终满足所有条件的样本索引
+        indices = np.where(combined_mask)[0]
+
+        if len(indices) == 0:
+            logger.info("该特定工况下无测试样本。")
+            continue
+
+        # 根据索引筛选出数据子集
+        subset_preds = all_preds_orig[indices]
+        subset_targets = all_targets_orig[indices]
+        subset_losses = all_losses[indices]
+        
+        # 调用评估函数计算并打印子集的指标
+        evaluate_subset(subset_preds, subset_targets, subset_losses, metric_fns, logger, f"样本数: {len(indices)}")
+    # ----------------------------------------------------
+
+def plot_samples(data, batch_idx, pred_mean_orig, target_orig, case_ids, input_scaler, config, logger, plot_iso_ratings=False):
     """
-    为第一批样本绘图。
+    为指定批次的样本绘图。
     """
-    # num_samples_to_plot = min(20, data.shape[0])
     num_samples_to_plot = data.shape[0]
-    print("\nPlotting first batch samples...")
+    print(f"\nPlotting samples from batch {batch_idx}...")
     for j in range(num_samples_to_plot):
         # --- 从归一化输入中反算出原始工况参数 ---
         normalized_params = data[j].cpu().numpy()
@@ -165,6 +224,18 @@ def plot_samples(data, batch_idx, pred_mean_orig, target_orig, case_ids, input_s
         target_sample = target_orig[j]
         sample_case_id = case_ids[j].item()
         
+        iso_scores = None
+        if plot_iso_ratings:
+            # ISORating 需要 numpy array 作为输入
+            pred_np = pred_sample.cpu().numpy()
+            target_np = target_sample.cpu().numpy()
+            
+            # 分别计算三个通道的ISO Rating
+            iso_x = ISORating(analyzed_signal=pred_np[0, :], reference_signal=target_np[0, :]).calculate()
+            iso_y = ISORating(analyzed_signal=pred_np[1, :], reference_signal=target_np[1, :]).calculate()
+            iso_z = ISORating(analyzed_signal=pred_np[2, :], reference_signal=target_np[2, :]).calculate()
+            iso_scores = {'x': iso_x, 'y': iso_y, 'z': iso_z}
+
         # 使用被重定向后的 config.save_dir
         plot_waveform_comparison(
             pred_wave=pred_sample,
@@ -174,7 +245,8 @@ def plot_samples(data, batch_idx, pred_mean_orig, target_orig, case_ids, input_s
             epoch='test',
             batch_idx=batch_idx,
             sample_idx=j,
-            save_dir=config.save_dir
+            save_dir=config.save_dir,
+            iso_ratings=iso_scores # 将计算出的分数传递给绘图函数
         )
     logger.info(f"\n绘图结果已保存至 '{config.save_dir}' 目录下的 'fig' 子目录中。\n")
 

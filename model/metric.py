@@ -222,16 +222,14 @@ class ISORating:
             return deriv
 
         def smooth_derivative(raw_deriv):
-            if len(raw_deriv) <= 2: return raw_deriv
-            smoothed = np.copy(raw_deriv)
-            if n >= 3:
-                smoothed[1] = np.mean(raw_deriv[0:3]); smoothed[-2] = np.mean(raw_deriv[-3:])
-            if n >= 5:
-                smoothed[2] = np.mean(raw_deriv[0:5]); smoothed[-3] = np.mean(raw_deriv[-5:])
-            if n >= 7:
-                smoothed[3] = np.mean(raw_deriv[0:7]); smoothed[-4] = np.mean(raw_deriv[-7:])
-            if n >= 9:
-                smoothed[4:-4] = np.convolve(raw_deriv, np.ones(9)/9, mode='valid')
+            # 如果信号长度小于窗口尺寸，直接返回原始导数，避免错误
+            if len(raw_deriv) < 9:
+                return raw_deriv
+            
+            # 使用 'same' 模式，输出数组与输入数组长度相同
+            # 卷积核是一个权重均为1/9的九点窗口
+            smoothed = np.convolve(raw_deriv, np.ones(9) / 9, mode='same')
+            
             return smoothed
 
         T_d = smooth_derivative(calculate_raw_derivative(T_ts, self.dt))

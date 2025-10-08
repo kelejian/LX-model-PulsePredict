@@ -197,7 +197,7 @@ class PulseAbsMaxScaler:
         return data * self.data_abs_max_
 
 
-def plot_waveform_comparison(pred_wave, true_wave, params, case_id, epoch, batch_idx, sample_idx, save_dir):
+def plot_waveform_comparison(pred_wave, true_wave, params, case_id, epoch, batch_idx, sample_idx, save_dir, iso_ratings=None):
     """
     绘制单样本的预测与真实波形对比图，并在标题中显示工况参数。
 
@@ -209,6 +209,7 @@ def plot_waveform_comparison(pred_wave, true_wave, params, case_id, epoch, batch
     :param batch_idx: 当前的批次索引。
     :param sample_idx: 样本在批次中的索引。
     :param save_dir: 图片保存的根目录 (仅在训练时使用)。
+    :param iso_ratings: (可选) 包含ISO评级分数的字典, e.g., {'x': 0.85, 'y': 0.92, 'z': 0.77}
     """
     # 根据是训练阶段还是测试阶段，决定图片保存目录
     if epoch == 'test':
@@ -233,9 +234,17 @@ def plot_waveform_comparison(pred_wave, true_wave, params, case_id, epoch, batch
     vel = params['vel']
     ang = params['ang']
     ov = params['ov']
-    title = (f'Case ID: {case_id}, Epoch: {epoch}, Batch: {batch_idx}, Sample: {sample_idx}\n'
-             f'Velocity: {vel:.1f} km/h, Angle: {ang:.1f}°, Overlap: {ov:.2f}'
-             )
+    title_line1 = (f'Case ID: {case_id}, Epoch: {epoch}, Batch: {batch_idx}, Sample: {sample_idx}\n'
+                   f'Velocity: {vel:.1f} km/h, Angle: {ang:.1f}°, Overlap: {ov:.2f}')
+    
+    title_line2 = ""
+    # 如果 iso_ratings 参数被提供，则创建第二行标题用于显示分数
+    if iso_ratings:
+        title_line2 = (f'\nISO Ratings -> X: {iso_ratings["x"]:.3f}, Y: {iso_ratings["y"]:.3f}, Z: {iso_ratings["z"]:.3f}')
+    
+    # 组合标题
+    title = title_line1 + title_line2
+
     fig.suptitle(title, fontsize=15, fontweight='bold')
     # --------------------------------
 
