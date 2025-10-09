@@ -18,6 +18,8 @@ def main(config):
 
     # --- 0. 定义绘图配置 ---
     PLOT_ISO_RATINGS_IN_TITLE = True # 设置为 True 以在标题中显示ISO-rating
+    BATCH_IDX = 0               # 设置为要绘图的批次索引（从0开始）
+    logger.info(f"绘图批次索引: {BATCH_IDX}")
     logger.info(f"绘图标题中是否显示ISO-rating: {PLOT_ISO_RATINGS_IN_TITLE}")
 
     # --- 1. 定义分组评估配置 ---
@@ -124,7 +126,7 @@ def main(config):
             all_targets_orig.append(target_orig.cpu())
 
             # ------------------------------画图----------------------------------
-            if batch_idx == 1:
+            if batch_idx == BATCH_IDX:
                 plot_samples(data, batch_idx, pred_mean_orig, target_orig, case_ids, input_scaler, config, logger, plot_iso_ratings=PLOT_ISO_RATINGS_IN_TITLE)
             # --------------------------------------------------------------------
 

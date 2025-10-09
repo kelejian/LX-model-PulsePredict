@@ -15,9 +15,9 @@ class ISORating:
 
         参数:
         analyzed_signal (array-like): 待评估信号 (Analyzed Signal, C(t))。
-                                      通常是计算机仿真(CAE)数据。
+                                      通常是计算机仿真(CAE)数据。本项目中，为 target 或 true_wave
         reference_signal (array-like): 参考信号 (Reference Signal, T(t))。
-                                       通常是物理试验(Test)数据。
+                                       通常是物理试验(Test)数据。本项目中，为 output 或 pred_wave
         dt (float): 信号的时间间隔，单位为秒。默认为 0.001s (对应1kHz采样率)。
         """
         if len(analyzed_signal) != len(reference_signal):
@@ -246,7 +246,7 @@ class ISORating:
         else:
             return ((max_allowed_error - slope_error) / max_allowed_error) ** exponent_factor
 
-def _calculate_iso_rating_for_channel(output, target, channel_idx, dt=0.001):
+def _calculate_iso_rating_for_channel(output, target, channel_idx, dt=0.001): # dt单位为秒
     """
     内部帮助函数，用于计算指定通道的平均ISO-rating。
     """
@@ -265,7 +265,7 @@ def _calculate_iso_rating_for_channel(output, target, channel_idx, dt=0.001):
             true_wave = true_waves[i, channel_idx, :]
             
             # 实例化并计算得分
-            iso_calculator = ISORating(true_wave, pred_wave, dt)
+            iso_calculator = ISORating(analyzed_signal=pred_wave, reference_signal=true_wave, dt=dt)
             total_score += iso_calculator.calculate()
 
         return total_score / batch_size if batch_size > 0 else 0.0

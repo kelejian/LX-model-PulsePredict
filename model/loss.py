@@ -302,13 +302,25 @@ class SlopeLoss(nn.Module):
 
     该损失函数通过比较预测信号和目标信号的一阶离散导数，
     来惩罚两者在局部变化趋势（即波形拓扑结构）上的差异。
+    此版本增加了可配置的移动平均平滑功能，以模拟ISO标准处理流程。
     """
-    def __init__(self, reduction='mean'):
+    def __init__(self, reduction='mean', apply_smoothing=True, smoothing_window_size=9):
         """
         :param reduction: 指定如何聚合损失，'mean' 或 'sum'。
+        :param apply_smoothing: 是否对导数应用平滑处理。
+        :param smoothing_window_size: 移动平均的窗口大小，应为奇数。默认为9，与ISO标准一致。
         """
         super().__init__()
         self.reduction = reduction
+        self.apply_smoothing = apply_smoothing
+        if self.apply_smoothing:
+            if smoothing_window_size % 2 == 0:
+                raise ValueError("`smoothing_window_size` 必须是奇数。")
+            self.smoothing_window_size = smoothing_window_size
+            
+            # 创建一个不可训练的卷积核用于移动平均
+            kernel = torch.ones(1, 1, self.smoothing_window_size) / self.smoothing_window_size
+            self.register_buffer('smoothing_kernel', kernel)
 
     def forward(self, pred, target):
         """
@@ -319,25 +331,36 @@ class SlopeLoss(nn.Module):
         :return: 计算出的标量损失值。
         """
         # --- 1. 计算一阶离散导数 ---
-        # 通过计算相邻时间点之差来近似导数
-        # pred[:, :, 1:] 表示从第二个时间点开始的所有点
-        # pred[:, :, :-1] 表示从第一个时间点到倒数第二个点的所有点
         pred_slope = pred[:, :, 1:] - pred[:, :, :-1]
         target_slope = target[:, :, 1:] - target[:, :, :-1]
 
-        # --- 2. 计算导数之间的误差 ---
-        # 使用均方误差 (MSE) 来衡量两条导数曲线的差异
-        # 这与 ISO 标准中比较导数曲线范数差异的思想一致
+        # --- 2. (可选) 对导数曲线进行平滑处理 ---
+        if self.apply_smoothing:
+            batch_size, num_channels, seq_len = pred_slope.shape
+            
+            pred_slope_reshaped = pred_slope.view(batch_size * num_channels, 1, seq_len)
+            target_slope_reshaped = target_slope.view(batch_size * num_channels, 1, seq_len)
+
+            # +++ 将卷积核动态移动到与输入张量相同的设备上 +++
+            kernel = self.smoothing_kernel.to(pred.device)
+
+            smoothed_pred_slope = F.conv1d(pred_slope_reshaped, kernel, padding='same')
+            smoothed_target_slope = F.conv1d(target_slope_reshaped, kernel, padding='same')
+            
+            pred_slope = smoothed_pred_slope.view(batch_size, num_channels, seq_len)
+            target_slope = smoothed_target_slope.view(batch_size, num_channels, seq_len)
+
+        # --- 3. 计算导数之间的误差 ---
         loss = F.mse_loss(pred_slope, target_slope, reduction='none')
 
-        # --- 3. 聚合损失 ---
+        # --- 4. 聚合损失 ---
         if self.reduction == 'mean':
             return loss.mean()
         elif self.reduction == 'sum':
             return loss.sum()
         else:
             raise ValueError(f"不支持的 reduction 类型: {self.reduction}")
-        
+
 class PhaseLoss(nn.Module):
     """
     一个可微分的代理损失函数，用于模拟 ISO 标准中的相位评分。

@@ -28,15 +28,26 @@ class ConfigParser:
         save_dir_root = Path(self.config['trainer']['save_dir'])
         exper_name = self.config['name']
 
-        # 【核心修改】根据运行模式决定并同步创建 models 和 log 目录
+        save_dir_root = save_dir_root.resolve()
+
+        # 根据运行模式决定并同步创建 models 和 log 目录
         if self.resume and not is_finetune:
             # --- 恢复训练 (RESUME) 或 测试 (TEST) 模式 ---
             # 确定父级目录
-            # e.g., resume path is '.../saved/models/PulseCNN_GauNLL/1225_103000/model_best.pth'
-            # parent_model_dir is '.../saved/models/PulseCNN_GauNLL/1225_103000'
             parent_model_dir = Path(self.resume).parent
-            # parent_log_dir is '.../saved/log/PulseCNN_GauNLL/1225_103000'
-            parent_log_dir = save_dir_root / 'log' / parent_model_dir.parent.name / parent_model_dir.name
+
+            # 1. 定义 models 和 log 的根目录 (现在将是绝对路径)
+            models_root = save_dir_root / 'models'
+            log_root = save_dir_root / 'log'
+            # 2. 获取 model 目录相对于其根目录的路径
+            relative_model_path = parent_model_dir.relative_to(models_root)
+            # 3. 在 log 根目录下重建这个相对路径，得到镜像的父级日志目录
+            parent_log_dir = log_root / relative_model_path
+            
+            session_name = f"test_{timestamp}" if is_test_run else f"resume_{timestamp}"
+            
+            self._save_dir = parent_model_dir / session_name
+            self._log_dir = parent_log_dir / session_name
             
             session_name = f"test_{timestamp}" if is_test_run else f"resume_{timestamp}"
             
