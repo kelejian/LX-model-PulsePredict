@@ -116,7 +116,7 @@ def main(config):
             pred_mean_orig, target_orig = inverse_transform(metrics_output, target, target_scaler)
             
             # 收集逆变换后的工况、预测和目标
-            input_scaler = getattr(data_loader.dataset, 'input_scaler', InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1))
+            input_scaler = getattr(data_loader.dataset, 'input_scaler', InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1))
             for i in range(data.shape[0]):
                 norm_vel, norm_ang, norm_ov = data[i].cpu().numpy()
                 raw_vel, raw_ang, raw_ov = input_scaler.inverse_transform(norm_vel, norm_ang, norm_ov)

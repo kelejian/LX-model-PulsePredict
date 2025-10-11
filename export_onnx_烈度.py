@@ -13,24 +13,7 @@ import joblib
 
 # 导入您项目中的模型定义和工具函数
 import model.model as module_arch
-from utils.util import InputScaler
-
-# +++ 1. 为ONNX导出创建模型封装 +++
-class ModelWrapperForONNX(torch.nn.Module):
-    """
-    一个封装器,用于统一不同模型(PulseMLP, PulseCNN)的输出接口,
-    确保在导出ONNX时,只返回最终的、用于评估的波形预测。
-    """
-    def __init__(self, model):
-        super().__init__()
-        self.model = model
-
-    def forward(self, *args, **kwargs):
-        # 调用原始模型的forward方法
-        model_output = self.model(*args, **kwargs)
-        # 调用原始模型的get_metrics_output方法,以获取最终的预测张量
-        final_prediction = self.model.get_metrics_output(model_output)
-        return final_prediction
+from utils.util import InputScaler, inverse_transform
 
 def create_sample_raw_input(raw_input_dict=None):
     """
@@ -84,53 +67,35 @@ def preprocess_input(raw_params):
     
     return torch.tensor(processed_params).unsqueeze(0)
 
-def inverse_transform_waveform(wave, scaler):
-    """
-    对归一化的波形进行逆变换,恢复到原始物理尺度。
-    """
-    if scaler is None:
-        print("  - 信息: 未提供scaler,跳过逆归一化,输出为归一化尺度。")
-        if isinstance(wave, torch.Tensor):
-            return wave.detach().cpu().numpy()
-        return wave
-    
-    if isinstance(wave, torch.Tensor):
-        wave = wave.detach().cpu().numpy()
-    
-    original_shape = wave.shape
-    wave_reshaped = wave.reshape(-1, 1)
-    wave_orig = scaler.inverse_transform(wave_reshaped)
-    return wave_orig.reshape(original_shape)
-
 def export_model(model, sample_input, output_path, opset_version=11):
     """
-    将PyTorch模型导出为ONNX格式,并详细注释其接口。
+    将原始的PulseCNN模型直接导出为ONNX格式,保留其所有原生输出。
     """
-    wrapped_model = ModelWrapperForONNX(model)
-    wrapped_model.eval()
+    model.eval()
 
     # --- ONNX模型接口定义 ---
+    # 验证模型是否支持GauNll_use,以确定输出数量
+    if not getattr(model, 'GauNll_use', False):
+        raise TypeError("此脚本当前只支持 GauNll_use=True 的 PulseCNN 模型导出。")
+
     # 输入节点 (Input Node)
-    # - 名称 (Name): 'input_params'
+    # - 名称 (Name): 'input' (与图中保持一致)
     # - 数据类型 (Data Type): float32
     # - 形状 (Shape): [batch_size, 3]
-    # - 格式: [[norm_velocity, norm_angle, norm_overlap], ...]
-    input_names = ["input_params"]
-    
-    # 输出节点 (Output Node)
-    # - 名称 (Name): 'output_waveform'
+    input_names = ["input"]
+
+    # 输出节点 (Output Nodes) - 包含所有中间尺度和方差
+    # - 名称 (Name): 'out_mean0', 'out_mean1', 'out_mean2', 'out_var0', 'out_var1', 'out_var2'
     # - 数据类型 (Data Type): float32
-    # - 形状 (Shape): [batch_size, 3, 150]
-    # - 格式: 归一化后的三轴加速度波形 [X, Y, Z]
-    output_names = ["output_waveform"]
+    # - 形状 (Shape): 分别为 [batch_size, 3, 37], [batch_size, 3, 75], [batch_size, 3, 150] ...
+    output_names = ["out_mean0", "out_mean1", "out_mean2", "out_var0", "out_var1", "out_var2"]
     
-    dynamic_axes = {
-        "input_params": {0: "batch_size"},
-        "output_waveform": {0: "batch_size"}
-    }
+    dynamic_axes = {"input": {0: "batch_size"}}
+    for name in output_names:
+        dynamic_axes[name] = {0: "batch_size"}
 
     torch.onnx.export(
-        wrapped_model,
+        model,
         sample_input,
         output_path,
         input_names=input_names,
@@ -157,7 +122,7 @@ def export_model(model, sample_input, output_path, opset_version=11):
 
 def plot_verification_comparison(pt_wave_orig, onnx_wave_orig, output_path, raw_params):
     """
-    绘制PyTorch和ONNX模型【真实物理尺度】输出的波形对比图。
+    绘制PyTorch和ONNX模型【真实物理尺度】最终预测的波形对比图。
     """
     pt_wave_orig = pt_wave_orig.reshape(3, 150)
     onnx_wave_orig = onnx_wave_orig.reshape(3, 150)
@@ -189,10 +154,8 @@ def plot_verification_comparison(pt_wave_orig, onnx_wave_orig, output_path, raw_
 
 def verify_onnx_model(onnx_path, pytorch_model, sample_input, raw_params, scaler=None):
     """
-    核心验证流程：
-    1. 分别用 PyTorch 和 ONNX Runtime 进行推理。
-    2. 对两者的输出进行逆归一化,得到真实物理尺度的波形。
-    3. 打印关键结果(如峰值)并绘制对比图,以供直观评估。
+    验证多输出的ONNX模型,并提取最终预测进行对比。
+    此版本调用项目中已有的 inverse_transform 函数。
     """
     try:
         import onnxruntime as ort
@@ -202,31 +165,45 @@ def verify_onnx_model(onnx_path, pytorch_model, sample_input, raw_params, scaler
     
     print("\n========== 验证 ONNX 模型 ==========")
     
-    # --- PyTorch 推理 (归一化尺度) ---
+    # --- PyTorch 推理 ---
     pytorch_model.eval()
     with torch.no_grad():
         pt_output_raw = pytorch_model(sample_input)
-        pt_pred_normalized = pytorch_model.get_metrics_output(pt_output_raw)
+        pt_pred_normalized = pt_output_raw[0][-1]
 
-    # --- ONNX Runtime 推理 (归一化尺度) ---
+    # --- ONNX Runtime 推理 ---
     sess = ort.InferenceSession(onnx_path, providers=['CPUExecutionProvider'])
-    onnx_inputs = {"input_params": sample_input.cpu().numpy()}
-    onnx_pred_normalized = sess.run(["output_waveform"], onnx_inputs)[0]
+    onnx_inputs = {"input": sample_input.cpu().numpy()}
+    onnx_outputs_list = sess.run(None, onnx_inputs)
+    onnx_pred_normalized = onnx_outputs_list[2]
     
     # --- 逆归一化,得到真实物理尺度输出 ---
-    print("对模型输出进行逆归一化以获得真实物理尺度结果...")
-    pt_pred_orig = inverse_transform_waveform(pt_pred_normalized, scaler)
-    onnx_pred_orig = inverse_transform_waveform(onnx_pred_normalized, scaler)
+    print("对模型最终预测(out_mean2)进行逆归一化...")
+    if scaler:
+        # 使用项目中已有的 inverse_transform 函数
+        # 注意: 该函数返回tensor,且需要两个输入,我们只关心第一个输出
+        pt_pred_orig_tensor, _ = inverse_transform(pt_pred_normalized, pt_pred_normalized, scaler)
+        pt_pred_orig = pt_pred_orig_tensor.cpu().numpy()
+
+        # 为ONNX的numpy输出创建一个tensor以使用该函数
+        onnx_pred_tensor = torch.from_numpy(onnx_pred_normalized).to(sample_input.device)
+        onnx_pred_orig_tensor, _ = inverse_transform(onnx_pred_tensor, onnx_pred_tensor, scaler)
+        onnx_pred_orig = onnx_pred_orig_tensor.cpu().numpy()
+    else:
+        # 如果没有scaler,直接使用numpy数组
+        print("  - 信息: 未提供scaler,跳过逆归一化,输出为归一化尺度。")
+        pt_pred_orig = pt_pred_normalized.cpu().numpy()
+        onnx_pred_orig = onnx_pred_normalized
     
     # --- 绘制对比图并打印关键信息 ---
     comparison_plot_path = Path(onnx_path).parent / f"{Path(onnx_path).stem}_comparison.png"
     plot_verification_comparison(pt_pred_orig, onnx_pred_orig, comparison_plot_path, raw_params)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="导出碰撞波形预测模型为ONNX格式")
-    parser.add_argument('-r', '--resume', type=str, required=True, help="已训练模型的权重文件路径 (e.g., saved/models/.../model_best.pth)")
+    parser = argparse.ArgumentParser(description="导出PulseCNN模型为ONNX格式(多输出)")
+    parser.add_argument('-r', '--resume', type=str, default="E:\\WPS Office\\1628575652\\WPS企业云盘\\清华大学\\我的企业文档\\课题组相关\\理想项目\\LX-model-PulsePredict\\saved\\models\\PulseCNN_GauNLL\\1008_153448\\resume_1008_161400\\model_best.pth", help="已训练模型的权重文件路径")
     parser.add_argument("--output_dir", type=str, default="./onnx_models", help="ONNX模型输出目录")
-    parser.add_argument("--opset_version", type=int, default=11, help="ONNX opset版本")
+    parser.add_argument("--opset_version", type=int, default=17, help="ONNX opset版本")
     args = parser.parse_args()
     
     os.makedirs(args.output_dir, exist_ok=True)
@@ -244,6 +221,9 @@ if __name__ == "__main__":
     with open(config_path) as f:
         config = json.load(f)
 
+    if config['arch']['type'] != 'PulseCNN':
+        raise TypeError(f"此脚本专为 PulseCNN 模型设计,但配置文件中的模型类型为 {config['arch']['type']}。")
+
     scaler = None
     if config['data_loader_train']['args'].get('pulse_norm_mode', 'none') != 'none':
         scaler_path_str = config['data_loader_train']['args'].get('scaler_path')
@@ -258,13 +238,11 @@ if __name__ == "__main__":
             print("  ⚠ 警告: 配置中未指定 'scaler_path',无法进行逆归一化。")
 
     print("\n创建并预处理样本输入...")
-    # ==============================================================
     raw_inputs = {
-        'impact_velocity': 43.9758,  # 碰撞速度 (kph)
-        'impact_angle': 1.257535,     # 碰撞角度 (degrees)
-        'overlap': 0.468949     # 重叠率
+        'impact_velocity': 43.97580257,  # kph
+        'impact_angle': 1.257534638,     # degrees
+        'overlap': 0.468948606            #  overlap
     }
-    # ==============================================================
     raw_params = create_sample_raw_input(raw_inputs)
     sample_input = preprocess_input(raw_params).to(device)
 
@@ -272,14 +250,12 @@ if __name__ == "__main__":
     print("加载PyTorch模型")
     print("="*50)
     
-    model_type = config['arch']['type']
-    model_args = config['arch']['args']
-    model = getattr(module_arch, model_type)(**model_args).to(device)
+    model = module_arch.PulseCNN(**config['arch']['args']).to(device)
     
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint['state_dict'])
     model.eval()
-    print(f"✔ 模型 '{model_type}' 加载成功。")
+    print("✔ 模型 'PulseCNN' 加载成功。")
 
     model_name = Path(config['name']).name
     onnx_path = os.path.join(args.output_dir, f"{model_name}.onnx")
