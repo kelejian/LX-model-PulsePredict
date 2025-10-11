@@ -105,6 +105,7 @@ data/
 input/
 saved/
 datasets/
+onnx_models/
 
 # editor, os cache directory
 .vscode/
