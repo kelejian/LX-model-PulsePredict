@@ -30,7 +30,7 @@ class CollisionDataset(Dataset):
 
         # --- 2. 归一化输入参数 ---
         # 注意：这里的 InputScaler 实例作为属性保存，以便在 test.py 中可以调用它进行逆变换
-        self.input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1)
+        self.input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1)
         norm_velocities, norm_angles, norm_overlaps = self.input_scaler.transform(
             raw_params[:, 0], raw_params[:, 1], raw_params[:, 2]
         )

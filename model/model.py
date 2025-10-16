@@ -191,8 +191,9 @@ class PulseCNN(BaseModel):
     旨在实现从粗到精的“逐步细化预测”。
     """
     def __init__(self, input_dim=3, output_channels=3,
-                 mlp_latent_dim=256, mlp_num_layers=3,
-                 projection_init_channels=16, UpLayer_ks=3, ResLayer_ks=3,
+                 mlp_latent_dim=256, mlp_num_layers=3, mlp_dropout=0.1, 
+                 projection_init_channels=16, projection_dropout=0.2,
+                 UpLayer_ks=3, ResLayer_ks=3,
                  channels_list=[256, 128, 64], output_lengths=None, GauNll_use=True):
         super().__init__()
         
@@ -209,13 +210,17 @@ class PulseCNN(BaseModel):
         # 1. 输入编码器
         self.encoder = PygMLP(
             in_channels=input_dim, hidden_channels=mlp_latent_dim, out_channels=mlp_latent_dim,
-            num_layers=mlp_num_layers, norm="batch_norm", act="leaky_relu", plain_last=False, dropout=0.1
+            num_layers=mlp_num_layers, norm="batch_norm", act="leaky_relu", plain_last=False, 
+            dropout=mlp_dropout
         )
 
         # 2. 投影块
         self.projection_block = nn.Sequential(
             nn.Linear(mlp_latent_dim + input_dim, self.initial_length * projection_init_channels),
-            nn.BatchNorm1d(self.initial_length * projection_init_channels), nn.LeakyReLU(),
+            nn.Dropout(projection_dropout),
+            nn.BatchNorm1d(self.initial_length * projection_init_channels), 
+            nn.LeakyReLU(),
+            # 将线性层的输出重塑为 (B, C, L)
             nn.Conv1d(projection_init_channels, channels_list[0], kernel_size=1)
         )
         self.projection_init_channels = projection_init_channels
@@ -247,11 +252,12 @@ class PulseCNN(BaseModel):
         z_prime = torch.cat([z, x], dim=-1)
 
         # 2. 通过投影块生成初始序列
-        proj_out = self.projection_block[0](z_prime)
-        proj_out = self.projection_block[1](proj_out)
-        proj_out = self.projection_block[2](proj_out)
-        proj_out_reshaped = proj_out.view(-1, self.projection_init_channels, self.initial_length)
-        initial_sequence = self.projection_block[3](proj_out_reshaped)
+        proj_out = self.projection_block[0](z_prime) # linear
+        proj_out = self.projection_block[1](proj_out) # dropout
+        proj_out = self.projection_block[2](proj_out) # batchnorm
+        proj_out = self.projection_block[3](proj_out) # relu
+        proj_out_reshaped = proj_out.view(-1, self.projection_init_channels, self.initial_length) # reshape
+        initial_sequence = self.projection_block[4](proj_out_reshaped) # conv1d
 
         # 3. 解码与多尺度特征提取
         features_list = [initial_sequence]

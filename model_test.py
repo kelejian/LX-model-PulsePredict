@@ -142,7 +142,7 @@ if __name__ == "__main__":
     import model.model as module_arch
 
     # 模型实例化
-    config = ConfigParser(read_json('config.json'))
+    config = ConfigParser(read_json('config_CNN.json'))
     Pulsemodel = config.init_obj('arch', module_arch)
     
     # 将模型移动到CUDA设备
