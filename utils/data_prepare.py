@@ -135,9 +135,9 @@ def package_pulse_data(pulse_dir, params_path, case_id_list, output_path):
 
 if __name__ == '__main__':
     from pathlib import Path
-    pulse_dir = Path(r'F:\VCS_acc_data\acc_data_before1015_4138')
-    params_path = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\distribution\distribution_1015.csv')
-    output_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS波形数据集打包\acc_data_before1015_4138')
+    pulse_dir = Path(r'F:\VCS_acc_data\acc_data_before1028_5407')
+    params_path = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\distribution\distribution_1029.csv')
+    output_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS波形数据集打包\acc_data_before1028_5407')
 
     if not output_dir.exists():
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -147,10 +147,14 @@ if __name__ == '__main__':
         # all_case_ids = pd.read_csv(params_path)['case_id']
         is_pulse_ok = pd.read_csv(params_path)['is_pulse_ok'] # 只选择波形数据OK的工况
         pulse_ok_case_ids = pd.read_csv(params_path).loc[is_pulse_ok == True, 'case_id']
+        # 只选<50000的case_id
+        pulse_ok_case_ids = pulse_ok_case_ids[pulse_ok_case_ids < 50000]
     elif params_path.suffix == '.npz':
         # all_case_ids = np.load(params_path)['case_id']
         is_pulse_ok = np.load(params_path)['is_pulse_ok']
         pulse_ok_case_ids = np.load(params_path)['case_id'][is_pulse_ok == True]
+        # 只选<50000的case_id
+        pulse_ok_case_ids = pulse_ok_case_ids[pulse_ok_case_ids < 50000]
     else:
         raise ValueError("参数文件必须是 .csv 或 .npz 格式。")
     

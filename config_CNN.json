@@ -6,10 +6,10 @@
         "args": {
             "GauNll_use": true,
             "mlp_latent_dim": 256,
-            "mlp_num_layers": 3,
-            "mlp_dropout": 0.1,
+            "mlp_num_layers": 2,
+            "mlp_dropout": 0.05,
             "projection_init_channels": 64,
-            "projection_dropout": 0.2,
+            "projection_dropout": 0.05,
             "UpLayer_ks": 3,
             "channels_list": [256, 128, 64],
             "output_lengths": [37, 75, 150]
@@ -18,7 +18,7 @@
     "data_loader_train": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1015_4138/packaged_data_train.npz",
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1028_5407/packaged_data_train.npz",
             "batch_size": 512,
             "shuffle": true,
             "validation_split": 0,
@@ -31,7 +31,7 @@
     "data_loader_test": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1015_4138/packaged_data_test.npz",
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1028_5407/packaged_data_test.npz",
             "batch_size": 32,
             "shuffle": false,
             "validation_split": 0,
@@ -45,7 +45,7 @@
         "type": "AdamW",
         "args": {
             "lr": 0.0003,
-            "weight_decay": 0.001
+            "weight_decay": 0.0012
         }
     },
 
@@ -53,7 +53,7 @@
         {
             "type": "MultiLoss",
             "weight": 0.7,
-            "channel_weights": [1.0, 0.5, 0.01], 
+            "channel_weights": [1.0, 0.5, 0.02], 
             "args": {
                 "loss_weights": [1.0, 2.0, 5.0],
                 "base_loss_type": "GaussianNLLLoss",
@@ -66,7 +66,7 @@
         {
             "type": "CorridorLoss",
             "weight": 1.0,
-            "channel_weights": [1.0, 0.5, 0.05],
+            "channel_weights": [1.0, 0.5, 0.02],
             "args": {
                 "inner_corridor_width": 0.05,
                 "exponent": 2.0
@@ -75,7 +75,7 @@
         {
             "type": "SlopeLoss",
             "weight": 1.6,
-            "channel_weights": [1.0, 0.4, 0],
+            "channel_weights": [1.0, 0.5, 0.02],
             "args": {
                 "reduction": "mean",
                 "apply_smoothing": false,

@@ -17,8 +17,8 @@ def main(config):
     logger = config.get_logger('test')
 
     # --- 0. 定义绘图配置 ---
-    PLOT_ISO_RATINGS_IN_TITLE = True # 设置为 True 以在标题中显示ISO-rating
-    BATCH_IDX = 0               # 设置为要绘图的批次索引（从0开始）
+    PLOT_ISO_RATINGS_IN_TITLE = False # 设置为 True 以在标题中显示ISO-rating
+    BATCH_IDX = 3               # 设置为要绘图的批次索引（从0开始）
     logger.info(f"绘图批次索引: {BATCH_IDX}")
     logger.info(f"绘图标题中是否显示ISO-rating: {PLOT_ISO_RATINGS_IN_TITLE}")
 
