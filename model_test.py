@@ -61,13 +61,26 @@ def test_model(
         outputs = model(inputs)
         print(f"✔ 输入形状：{inputs.shape}")
 
-    if isinstance(outputs, (tuple, list)):
+    # 检查 outputs 是否为 tuple 或 list,但排除 torch.Tensor
+    if isinstance(outputs, (tuple, list)) and not isinstance(outputs, torch.Tensor):
         # 一行打印模型各个输出output的形状
-        print(f"✔ 模型各个输出的形状：{[output.shape for output in outputs]}")
+        try:
+            print(f"✔ 模型各个输出的形状：{[output.shape if isinstance(output, torch.Tensor) else type(output) for output in outputs]}")
+        except Exception as e:
+            print(f"✔ 模型输出类型：{type(outputs)}, 包含 {len(outputs)} 个元素")
+            print(f"✔ 各元素类型：{[type(output) for output in outputs]}")
+        
+        loss = None
         for i, output in enumerate(outputs):
-            if labels.shape == output.shape:
+            if isinstance(output, torch.Tensor) and labels.shape == output.shape:
                 loss = criterion(output, labels)
                 print(f"✔ 第{i+1}个模型输出对应了一个loss值: {loss.item()}")
+        
+        if loss is None:
+            print("✘ 所有模型输出形状与标签形状都不匹配，使用第一个输出计算损失")
+            first_tensor = outputs[0] if isinstance(outputs[0], torch.Tensor) else outputs[0][0]
+            loss = criterion(first_tensor, labels)
+            print(f"✔ 损失值：{loss.item()}")
 
     else:
         print(f"✔ 模型输出形状：{outputs.shape}")
@@ -76,6 +89,13 @@ def test_model(
             print(f"✔ 损失值：{loss.item()}")
         else: 
             print("✘ 模型输出形状与标签形状不匹配，无法计算损失值")
+            # 尝试调整形状后计算损失
+            try:
+                loss = criterion(outputs.view_as(labels), labels)
+                print(f"✔ 调整形状后计算损失值：{loss.item()}")
+            except:
+                print("✘ 无法通过调整形状计算损失，请检查模型输出和标签的维度")
+                loss = criterion(outputs, labels)  # 强制计算以便后续反向传播测试
 
 
     # 反向传播
@@ -103,7 +123,7 @@ def test_model(
         dynamic_axes = {"input": {0: "batch_size"}}
     
     # 配置输出名称和动态轴
-    if isinstance(outputs, (tuple, list)):
+    if isinstance(outputs, (tuple, list)) and not isinstance(outputs, torch.Tensor):
         output_names = [f"output_{i}" for i in range(len(outputs))]
         for i in range(len(outputs)):
             dynamic_axes[f"output_{i}"] = {0: "batch_size"}

@@ -15,9 +15,9 @@ class ISORating:
 
         参数:
         analyzed_signal (array-like): 待评估信号 (Analyzed Signal, C(t))。
-                                      通常是计算机仿真(CAE)数据。本项目中，为 target 或 true_wave
+                                      通常是计算机仿真(CAE)数据。本项目中，为 output 或 pred_wave
         reference_signal (array-like): 参考信号 (Reference Signal, T(t))。
-                                       通常是物理试验(Test)数据。本项目中，为 output 或 pred_wave
+                                       通常是物理试验(Test)数据。本项目中，为 target 或 true_wave
         dt (float): 信号的时间间隔，单位为秒。默认为 0.001s (对应1kHz采样率)。
         """
         if len(analyzed_signal) != len(reference_signal):

@@ -11,14 +11,14 @@
             "projection_init_channels": 64,
             "projection_dropout": 0.05,
             "UpLayer_ks": 3,
-            "channels_list": [256, 128, 64],
-            "output_lengths": [37, 75, 150]
+            "channels_list": [256, 128, 64, 64],
+            "output_lengths": [37, 75, 150, 150]
         }
     },
     "data_loader_train": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1028_5407/packaged_data_train.npz",
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1103_5817/packaged_data_train.npz",
             "batch_size": 512,
             "shuffle": true,
             "validation_split": 0,
@@ -31,8 +31,8 @@
     "data_loader_test": {
         "type": "CollisionDataLoader",
         "args": {
-            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1028_5407/packaged_data_test.npz",
-            "batch_size": 32,
+            "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1103_5817/packaged_data_test.npz",
+            "batch_size": 64,
             "shuffle": false,
             "validation_split": 0,
             "num_workers": 0,
@@ -53,9 +53,9 @@
         {
             "type": "MultiLoss",
             "weight": 0.7,
-            "channel_weights": [1.0, 0.5, 0.02], 
+            "channel_weights": [1.0, 0.5, 0.01], 
             "args": {
-                "loss_weights": [1.0, 2.0, 5.0],
+                "loss_weights": [1.0, 2.0, 1.0, 4.5],
                 "base_loss_type": "GaussianNLLLoss",
                 "base_loss_args": {
                     "eps": 1e-06,
@@ -66,7 +66,7 @@
         {
             "type": "CorridorLoss",
             "weight": 1.0,
-            "channel_weights": [1.0, 0.5, 0.02],
+            "channel_weights": [1.0, 0.6, 0.03],
             "args": {
                 "inner_corridor_width": 0.05,
                 "exponent": 2.0
@@ -75,7 +75,7 @@
         {
             "type": "SlopeLoss",
             "weight": 1.6,
-            "channel_weights": [1.0, 0.5, 0.02],
+            "channel_weights": [1.0, 0.5, 0.01],
             "args": {
                 "reduction": "mean",
                 "apply_smoothing": false,
@@ -125,12 +125,12 @@
     "lr_scheduler": {
         "type": "CosineAnnealingLR",
         "args": {
-            "T_max": 80,
+            "T_max": 90,
             "eta_min": 5e-7
         }
     },
     "trainer": {
-        "epochs": 80,
+        "epochs": 90,
         "save_dir": "saved/",
         "save_period": 10,
         "verbosity": 2,

@@ -18,7 +18,7 @@ def main(config):
 
     # --- 0. 定义绘图配置 ---
     PLOT_ISO_RATINGS_IN_TITLE = False # 设置为 True 以在标题中显示ISO-rating
-    BATCH_IDX = 3               # 设置为要绘图的批次索引（从0开始）
+    BATCH_IDX = 1               # 设置为要绘图的批次索引（从0开始）
     logger.info(f"绘图批次索引: {BATCH_IDX}")
     logger.info(f"绘图标题中是否显示ISO-rating: {PLOT_ISO_RATINGS_IN_TITLE}")
 
@@ -41,6 +41,22 @@ def main(config):
             'conditions': [
                 {'param_index': 1, 'type': 'abs_range', 'range': [0, 15]},    # 条件1: 角度绝对值在[0, 15]度
                 {'param_index': 2, 'type': 'abs_range', 'range': [0.75, 1.0]}  # 条件2: 重叠率绝对值在[0.75, 1.0]
+            ]
+        },
+        'angle_overlap_same_sign': {
+            'description': "角度(ang)与重叠率(ov)同号",
+            'conditions': [
+                # param_index: 1 (角度)
+                # other_param_index: 2 (重叠率)
+                {'param_index': 1, 'type': 'same_sign', 'other_param_index': 2}
+            ]
+        },
+        'angle_gt15_and_full_or_samesign': {
+            'description': "角度(abs)>15° 且 (重叠率=100% 或 角度重叠率同号)",
+            # 注意：此 'conditions' 列表仅用于占位，
+            # 实际逻辑在下面的循环中被硬编码 (hardcoded)
+            'conditions': [ 
+                {'type': 'custom_logic'}
             ]
         },
     }
@@ -171,26 +187,64 @@ def main(config):
         logger.info(title.center(50, "="))
         logger.info("="*50)
 
-        # 初始化一个全为 True 的布尔掩码，代表所有样本
-        combined_mask = np.full(all_raw_params.shape[0], True)
-
-        # 逐个应用定义好的条件，通过逻辑与(&)操作来更新掩码
-        for cond in config_item['conditions']:
-            param_index = cond['param_index']
-            cond_type = cond['type']
-            min_val, max_val = cond['range']
-
-            param_to_check = all_raw_params[:, param_index]
-
-            if cond_type == 'abs_range':
-                # 对参数的绝对值进行范围筛选
-                current_mask = (np.abs(param_to_check) >= min_val) & (np.abs(param_to_check) <= max_val)
-            else: # 默认为 'range'
-                # 直接对参数原值进行范围筛选
-                current_mask = (param_to_check >= min_val) & (param_to_check <= max_val)
-            
-            combined_mask &= current_mask
+        # --- MODIFICATION START ---
+        # 为新的复杂逻辑 (A AND (B OR C)) 添加硬编码分支
         
+        if case_name == 'angle_gt15_and_full_or_samesign':
+            # 手动构建复杂的布尔掩码
+            
+            # Condition A: 角度绝对值 > 15°
+            param_angle = all_raw_params[:, 1]
+            mask_A = np.abs(param_angle) > 15
+            
+            # Condition B: 重叠率 = 100% (即 |overlap| == 1.0)
+            param_overlap = all_raw_params[:, 2]
+            # 使用 np.isclose 来安全地比较浮点数
+            mask_B = np.isclose(np.abs(param_overlap), 1.0)
+            
+            # Condition C: 角度和重叠率同号
+            mask_C = (param_angle * param_overlap) > 0
+            
+            # 最终逻辑: A AND (B OR C)
+            combined_mask = mask_A & (mask_B | mask_C)
+
+        else:
+            # --- 原始逻辑：处理所有只包含 AND 的简单条件 ---
+            combined_mask = np.full(all_raw_params.shape[0], True)
+
+            for cond in config_item['conditions']:
+                cond_type = cond['type']
+                
+                # 如果是占位符，则跳过
+                if cond_type == 'custom_logic':
+                    continue
+                    
+                param_index = cond['param_index']
+
+                if cond_type == 'abs_range':
+                    min_val, max_val = cond['range']
+                    param_to_check = all_raw_params[:, param_index]
+                    current_mask = (np.abs(param_to_check) >= min_val) & (np.abs(param_to_check) <= max_val)
+                
+                elif cond_type == 'range':
+                    min_val, max_val = cond['range']
+                    param_to_check = all_raw_params[:, param_index]
+                    current_mask = (param_to_check >= min_val) & (param_to_check <= max_val)
+                
+                elif cond_type == 'same_sign':
+                    other_param_index = cond['other_param_index']
+                    param1_values = all_raw_params[:, param_index]
+                    param2_values = all_raw_params[:, other_param_index]
+                    current_mask = (param1_values * param2_values) > 0
+                
+                else:
+                    logger.warning(f"未知的条件类型: {cond_type}，已跳过。")
+                    continue
+                
+                combined_mask &= current_mask
+        
+        # --- MODIFICATION END ---
+            
         # 找到最终满足所有条件的样本索引
         indices = np.where(combined_mask)[0]
 
