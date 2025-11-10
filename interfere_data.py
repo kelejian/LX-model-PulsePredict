@@ -1,4 +1,3 @@
-# plot_accuracy_distribution.py
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -19,7 +18,7 @@ from utils.util import InputScaler, inverse_transform
 from parse_config import ConfigParser # 仅用于日志记录器
 
 #==========================================================================================
-# 1. 配置文件 (请在此处修改为您本地的路径和配置)
+# 1. 配置文件
 #==========================================================================================
 # 绘图中文正常显示
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 黑体
@@ -201,7 +200,7 @@ def main():
     logger.info(f"模型 '{model_arch_type}' 加载成功并设置到 {device}。")
 
     # --- 3. 加载 Scalers ---
-    input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1)
+    input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1)
     target_scaler = None
     
     try:

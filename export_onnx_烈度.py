@@ -60,7 +60,7 @@ def preprocess_input(raw_params):
             - 数据形状: (1, 3)
             - 数据格式: [[norm_velocity, norm_angle, norm_overlap]]
     """
-    scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1)
+    scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1)
     velocity, angle, overlap = raw_params
     norm_velocity, norm_angle, norm_overlap = scaler.transform(velocity, angle, overlap)
     processed_params = np.array([norm_velocity, norm_angle, norm_overlap], dtype=np.float32)
