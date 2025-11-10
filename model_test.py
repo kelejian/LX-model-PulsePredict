@@ -172,7 +172,7 @@ if __name__ == "__main__":
     batch_size = 128
 
     y = torch.randn(batch_size, 3, 150).cuda()
-    x = torch.randn(batch_size, 3).cuda()  # 随机生成连续特征
+    x = torch.randn(batch_size, 4).cuda()  # 随机生成连续特征
 
     # 测试模型
     test_model(Pulsemodel, inputs=x, labels=y)

@@ -60,11 +60,15 @@ def preprocess_input(raw_params):
             - 数据形状: (1, 3)
             - 数据格式: [[norm_velocity, norm_angle, norm_overlap]]
     """
-    scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1)
-    velocity, angle, overlap = raw_params
+    scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1)
+    velocity, angle, overlap = raw_params[0], raw_params[1], raw_params[2]
     norm_velocity, norm_angle, norm_overlap = scaler.transform(velocity, angle, overlap)
-    processed_params = np.array([norm_velocity, norm_angle, norm_overlap], dtype=np.float32)
-    
+    feat4_norm_factor = 135.0 # 必须与 data_loader/data_loaders.py 中的self.feat4_norm_factor 保持一致
+    raw_feat_4 = angle + 90.0 * overlap
+    norm_feat_4 = raw_feat_4 / feat4_norm_factor
+
+    processed_params = np.array([norm_velocity, norm_angle, norm_overlap, norm_feat_4], dtype=np.float32)
+
     return torch.tensor(processed_params).unsqueeze(0)
 
 def export_model(model, sample_input, output_path, opset_version=11):

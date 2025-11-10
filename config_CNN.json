@@ -4,6 +4,7 @@
     "arch": {
         "type": "PulseCNN",
         "args": {
+            "input_dim": 4,
             "GauNll_use": true,
             "mlp_latent_dim": 256,
             "mlp_num_layers": 2,

@@ -4,6 +4,7 @@
     "arch": {
         "type": "PulseMLP",
         "args": {
+            "input_dim": 4,
             "GauNll_use": true,
             "hidden_dims": 256,
             "num_layers": 3,

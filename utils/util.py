@@ -135,7 +135,7 @@ def inverse_transform(pred_tensor, target_tensor, scaler):
     
     return pred_orig, target_orig
 class InputScaler:
-    def __init__(self, v_min=25, v_max=65, a_abs_max=60, o_abs_max=1):
+    def __init__(self, v_min=25, v_max=65, a_abs_max=45, o_abs_max=1):
         '''
         :param v_min: 速度的最小值
         :param v_max: 速度的最大值

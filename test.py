@@ -132,9 +132,10 @@ def main(config):
             pred_mean_orig, target_orig = inverse_transform(metrics_output, target, target_scaler)
             
             # 收集逆变换后的工况、预测和目标
-            input_scaler = getattr(data_loader.dataset, 'input_scaler', InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1))
+            input_scaler = getattr(data_loader.dataset, 'input_scaler', InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1))
             for i in range(data.shape[0]):
-                norm_vel, norm_ang, norm_ov = data[i].cpu().numpy()
+                norm_params_all = data[i].cpu().numpy()
+                norm_vel, norm_ang, norm_ov = norm_params_all[0], norm_params_all[1], norm_params_all[2] # 只取前3个原始参数（速度、角度、重叠率）
                 raw_vel, raw_ang, raw_ov = input_scaler.inverse_transform(norm_vel, norm_ang, norm_ov)
                 all_raw_params.append([raw_vel, raw_ang, raw_ov])
             
@@ -269,9 +270,9 @@ def plot_samples(data, batch_idx, pred_mean_orig, target_orig, case_ids, input_s
     print(f"\nPlotting samples from batch {batch_idx}...")
     for j in range(num_samples_to_plot):
         # --- 从归一化输入中反算出原始工况参数 ---
-        normalized_params = data[j].cpu().numpy()
-        norm_vel, norm_ang, norm_ov = normalized_params[0], normalized_params[1], normalized_params[2]
-        
+        normalized_params_all = data[j].cpu().numpy()
+        norm_vel, norm_ang, norm_ov = normalized_params_all[0], normalized_params_all[1], normalized_params_all[2]
+
         raw_vel, raw_ang, raw_ov = input_scaler.inverse_transform(norm_vel, norm_ang, norm_ov)
 
         collision_params = {'vel': raw_vel, 'ang': raw_ang, 'ov': raw_ov}

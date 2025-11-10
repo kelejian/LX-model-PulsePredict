@@ -201,7 +201,7 @@ def main():
     logger.info(f"模型 '{model_arch_type}' 加载成功并设置到 {device}。")
 
     # --- 3. 加载 Scalers ---
-    input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1)
+    input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1)
     target_scaler = None
     
     try:
@@ -269,10 +269,21 @@ def main():
 
     # --- 5. 准备模型输入 (归一化) ---
     normalized_params_list = []
+    FEAT4_NORM_FACTOR = 135.0 # 归一化因子，必须与 data_loader 中一致！
     for params in filtered_raw_params:
-        norm_vel, norm_ang, norm_ov = input_scaler.transform(params[0], params[1], params[2])
-        normalized_params_list.append([norm_vel, norm_ang, norm_ov])
-    
+            # <---  提取 v, a, o --->
+            v, a, o = params[0], params[1], params[2]
+            
+            # <---  归一化原始 3 特征 --->
+            norm_vel, norm_ang, norm_ov = input_scaler.transform(v, a, o)
+            
+            # <--- 计算并归一化新特征 --->
+            raw_feat_4 = a + 90.0 * o
+            norm_feat_4 = raw_feat_4 / FEAT4_NORM_FACTOR
+
+            # <---  添加所有 4 个特征 --->
+            normalized_params_list.append([norm_vel, norm_ang, norm_ov, norm_feat_4])
+
     normalized_params_np = np.array(normalized_params_list, dtype=np.float32)
     
     # 转换为 PyTorch Tensors

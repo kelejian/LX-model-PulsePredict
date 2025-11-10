@@ -30,14 +30,32 @@ class CollisionDataset(Dataset):
 
         # --- 2. 归一化输入参数 ---
         # 注意：这里的 InputScaler 实例作为属性保存，以便在 test.py 中可以调用它进行逆变换
-        self.input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=60, o_abs_max=1)
+        self.input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1)
+        
+        # <--- 定义新工程特征的归一化因子 (a + 90*o)，预估范围[-135, 135] --->
+        self.feat4_norm_factor = 135.0 
+        
+        # <--- 提取原始特征 --->
+        raw_v = raw_params[:, 0]
+        raw_a = raw_params[:, 1]
+        raw_o = raw_params[:, 2]
+
+        # <--- 计算新的原始工程特征 --->
+        raw_feat_4 = raw_a + 90.0 * raw_o
+
+        # <--- 归一化原始 3 个特征 --->
         norm_velocities, norm_angles, norm_overlaps = self.input_scaler.transform(
-            raw_params[:, 0], raw_params[:, 1], raw_params[:, 2]
+            raw_v, raw_a, raw_o
         )
+
+        # <--- 归一化新的工程特征 --->
+        norm_feat_4 = raw_feat_4 / self.feat4_norm_factor
+
+        # <--- 将所有 4 个特征 stack 为 self.features --->
         self.features = torch.tensor(
-            np.stack([norm_velocities, norm_angles, norm_overlaps], axis=1),
+            np.stack([norm_velocities, norm_angles, norm_overlaps, norm_feat_4], axis=1),
             dtype=torch.float32
-        ) # 形状 (N, 3)
+        ) # 形状 (N, 4)
 
         # --- 3. （可选）归一化输出波形 ---
         if self.target_scaler:
