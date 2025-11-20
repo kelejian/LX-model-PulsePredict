@@ -135,9 +135,9 @@ def package_pulse_data(pulse_dir, params_path, case_id_list, output_path):
 
 if __name__ == '__main__':
     from pathlib import Path
-    pulse_dir = Path(r'G:\VCS_acc_data\acc_data_before1103_5817')
-    params_path = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\distribution\distribution_1103.csv')
-    output_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS波形数据集打包\acc_data_before1103_5817')
+    pulse_dir = Path(r'G:\VCS_acc_data\acc_data_before1111_6134')
+    params_path = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\distribution\distribution_1111.csv')
+    output_dir = Path(r'E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS波形数据集打包\acc_data_before1111_6134')
 
     if not output_dir.exists():
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -161,7 +161,7 @@ if __name__ == '__main__':
     all_case_ids = pulse_ok_case_ids.tolist()
     print(f"*** 总共有 {len(all_case_ids)} 个工况波形数据 OK ***")
     np.random.shuffle(all_case_ids)
-    num_train = int(len(all_case_ids) * 0.85)
+    num_train = int(len(all_case_ids) * 0.86)
     train_case_ids = all_case_ids[:num_train]
     test_case_ids = all_case_ids[num_train:]
 

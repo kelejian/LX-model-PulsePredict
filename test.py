@@ -1,3 +1,5 @@
+import os
+os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = 'T'
 import warnings
 warnings.filterwarnings('ignore')
 import argparse
@@ -11,14 +13,16 @@ from parse_config import ConfigParser
 from model.metric import ISORating # 导入 ISORating 类用于计算
 from utils import inverse_transform, plot_waveform_comparison, InputScaler
 from pathlib import Path
+import os
+import pandas as pd
 import numpy as np
 
 def main(config):
     logger = config.get_logger('test')
 
     # --- 0. 定义绘图配置 ---
-    PLOT_ISO_RATINGS_IN_TITLE = False # 设置为 True 以在标题中显示ISO-rating
-    BATCH_IDX = 1               # 设置为要绘图的批次索引（从0开始）
+    PLOT_ISO_RATINGS_IN_TITLE = True # 设置为 True 以在标题中显示ISO-rating
+    BATCH_IDX = 0              # 设置为要绘图的批次索引（从0开始）
     logger.info(f"绘图批次索引: {BATCH_IDX}")
     logger.info(f"绘图标题中是否显示ISO-rating: {PLOT_ISO_RATINGS_IN_TITLE}")
 
@@ -130,7 +134,9 @@ def main(config):
 
             # 计算指标前，先对数据进行逆变换，如果没有scaler，则返回原始张量
             pred_mean_orig, target_orig = inverse_transform(metrics_output, target, target_scaler)
-            
+
+            # ---------------------------------------       
+
             # 收集逆变换后的工况、预测和目标
             input_scaler = getattr(data_loader.dataset, 'input_scaler', InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1))
             for i in range(data.shape[0]):
@@ -320,7 +326,6 @@ def evaluate_subset(preds, targets, losses, metric_fns, logger, header_info=None
     # 格式化输出
     for key, value in log.items():
         logger.info('    {:15s}: {}'.format(str(key), value))
-
 
 if __name__ == '__main__':
     args = argparse.ArgumentParser(description='LX-CrashPulsePredictionModel Test')

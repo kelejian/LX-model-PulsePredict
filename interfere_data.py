@@ -1,7 +1,8 @@
 
+import os
+os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = 'T'
 import warnings
 warnings.filterwarnings('ignore')
-import os
 import json
 import joblib
 import numpy as np
@@ -10,12 +11,14 @@ from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
+import pandas as pd
 
 # 导入项目模块
 import model.model as module_arch
 from model.metric import ISORating
 from utils.util import InputScaler, inverse_transform
 from parse_config import ConfigParser # 仅用于日志记录器
+from utils.util import InputScaler, inverse_transform, plot_waveform_comparison
 
 #==========================================================================================
 # 1. 配置文件
@@ -28,14 +31,14 @@ plt.rcParams['axes.unicode_minus'] = False    # 负号正常显示
 # --------------------------------------------------------------------------------------
 # 指定要加载的模型检查点 (.pth) 文件路径
 CHECKPOINT_PATH = (
-    r"E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\LX-model-PulsePredict\saved\models\PulseCNN_GauNLL\1106_123135\model_best.pth"
+    r"E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\LX-model-PulsePredict\saved\models\PulseCNN_GauNLL\1120_121535\resume_1120_124526\model_best.pth"
 )
 
 # 指定要分析的数据集 (.npz) 文件路径 (例如，测试集或包含所有工况的完整数据集)
-DATASET_NPZ_PATH = (
-    r"E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关"
-    r"\VCS波形数据集打包\acc_data_before1103_5817\packaged_data_test.npz"
-)
+DATASET_NPZ_PATH_LIST = [
+    r"E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS波形数据集打包\acc_data_before1111_6134\packaged_data_test.npz",
+    r"E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\仿真数据库相关\VCS波形数据集打包\acc_data_before1111_6134\packaged_data_train.npz"
+]
 
 # 1.2. 绘图轴配置
 # --------------------------------------------------------------------------------------
@@ -78,6 +81,13 @@ ISO_RATING_RANGE_X = (0.5, 1.0)  # X 轴范围
 ISO_RATING_RANGE_Y = (0.1, 0.9)  # Y 轴范围
 ISO_RATING_RANGE_Z = (0, 0.6)  # Z 轴范围
 
+PLOT_WAVEFORM_CONFIG = {
+    'target_case_ids': [5254,6878,8172,4532,698,918,58,2542,3078,1153,1976,2068,4120,1043,7760],     # 指定要强制绘图的 case_id 列表，例如 [10, 25]
+    'plot_low_score': True,    # 是否自动绘制低分案例
+    'low_score_threshold': 0.55 # 低分阈值 (ISO Rating X < 0.5)
+}
+
+EXPORT_EXCEL_CASE_IDS = [3249, 4024, 6561, 5254, 704, 2350] 
 #==========================================================================================
 # 2. 辅助函数
 #==========================================================================================
@@ -85,7 +95,6 @@ ISO_RATING_RANGE_Z = (0, 0.6)  # Z 轴范围
 def get_run_root_and_config_path(checkpoint_path):
     """
     根据检查点路径推断出实验的根目录和config.json路径。
-    (借鉴自 export_onnx_烈度.py)
     """
     cp_path = Path(checkpoint_path)
     # 假设 .pth 文件在 session 文件夹中 (如 resume_... 或 test_...)
@@ -144,6 +153,48 @@ def plot_iso_scatter(x_data, y_data, color_data, config, save_path, vmin, vmax):
     
     plt.savefig(save_path, dpi=200, bbox_inches='tight')
     plt.close()
+
+def save_case_to_excel(pred_wave, true_wave, case_id, save_dir):
+    """
+    将指定 Case 的预测和真值波形保存为 Excel 文件。
+    包含 3 个 Sheet (X, Y, Z)。
+    """
+    # 确保输入是 Numpy 数组
+    if isinstance(pred_wave, torch.Tensor):
+        pred_wave = pred_wave.cpu().numpy()
+    if isinstance(true_wave, torch.Tensor):
+        true_wave = true_wave.cpu().numpy()
+
+    # 时间戳：0.001s ~ 0.150s (假设长度为 150)
+    length = pred_wave.shape[1]
+    time_seq = np.arange(1, length + 1) * 0.001
+
+    # 定义三个方向的 Sheet 名称
+    directions = ['X', 'Y', 'Z']
+    
+    # 构造保存路径 (保存到 save_dir 下的 excel_data 文件夹)
+    excel_dir = save_dir / "excel_data"
+    os.makedirs(excel_dir, exist_ok=True)
+    
+    file_name = f"case_{case_id}_data.xlsx"
+    save_path = excel_dir / file_name
+
+    # 使用 Pandas ExcelWriter 写入多个 Sheet
+    try:
+        with pd.ExcelWriter(save_path) as writer:
+            for i, direction in enumerate(directions):
+                # 构造 DataFrame
+                df = pd.DataFrame({
+                    'Time (s)': time_seq,
+                    'Ground Truth': true_wave[i, :],
+                    'Prediction': pred_wave[i, :]
+                })
+                # 写入 Sheet
+                df.to_excel(writer, sheet_name=f'Direction_{direction}', index=False)
+        
+        print(f"  [Excel保存] Case {case_id} 已保存至: {save_path}")
+    except Exception as e:
+        print(f"  [Excel保存失败] Case {case_id}: {e}")
 #==========================================================================================
 # 3. 主执行函数
 #==========================================================================================
@@ -223,14 +274,51 @@ def main():
         return
 
     # --- 4. 加载并筛选数据 ---
-    logger.info(f"正在加载并筛选数据集: {DATASET_NPZ_PATH}")
-    try:
-        data = np.load(DATASET_NPZ_PATH)
-        all_raw_params = data['params']   # (N, 3)
-        all_waveforms = data['waveforms'] # (N, 3, 150)
-    except Exception as e:
-        logger.error(f"加载 .npz 文件失败: {e}")
+    logger.info(f"正在加载并筛选数据集...")
+    
+    # <--- 修改: 循环加载多个文件并合并 --->
+    all_raw_params_list = []
+    all_waveforms_list = []
+    all_case_ids_list = []
+    all_source_files_list = []
+
+    for npz_path_str in DATASET_NPZ_PATH_LIST:
+        npz_path = Path(npz_path_str)
+        if not npz_path.exists():
+            logger.warning(f"文件不存在，跳过: {npz_path}")
+            continue
+            
+        try:
+            data = np.load(npz_path)
+            # 读取数据
+            params = data['params']
+            waveforms = data['waveforms']
+            case_ids = data['case_ids']
+            
+            all_raw_params_list.append(params)
+            all_waveforms_list.append(waveforms)
+            all_case_ids_list.append(case_ids)
+            
+            # 记录来源文件名 (扩展为与数据等长的列表)
+            file_name = npz_path.name
+            all_source_files_list.extend([file_name] * len(case_ids))
+            
+            logger.info(f"成功加载: {file_name} (样本数: {len(case_ids)})")
+            
+        except Exception as e:
+            logger.error(f"加载 {npz_path} 失败: {e}")
+
+    if not all_raw_params_list:
+        logger.error("未成功加载任何数据，脚本终止。")
         return
+
+    # 合并所有数据
+    all_raw_params = np.concatenate(all_raw_params_list, axis=0)
+    all_waveforms = np.concatenate(all_waveforms_list, axis=0)
+    all_case_ids = np.concatenate(all_case_ids_list, axis=0)
+    all_source_files = np.array(all_source_files_list)
+    
+    logger.info(f"数据合并完成，总样本数: {len(all_case_ids)}")
 
     # 应用工况筛选
     conditions = SPECIFIC_CASE_CONFIG.get('conditions', [])
@@ -265,6 +353,8 @@ def main():
     # 提取筛选后的数据
     filtered_raw_params = all_raw_params[filtered_indices]
     filtered_true_waveforms = all_waveforms[filtered_indices]
+    filtered_case_ids = all_case_ids[filtered_indices]
+    filtered_source_files = all_source_files[filtered_indices]
 
     # --- 5. 准备模型输入 (归一化) ---
     normalized_params_list = []
@@ -340,11 +430,86 @@ def main():
 
     logger.info("ISO Ratings 计算完成。")
 
+    # <--- 保存结果到 CSV 表格 --->
+    import pandas as pd
+    
+    summary_df = pd.DataFrame({
+        'case_id': filtered_case_ids,
+        'source_file': filtered_source_files,
+        'velocity': filtered_raw_params[:, 0],
+        'angle': filtered_raw_params[:, 1],
+        'overlap': filtered_raw_params[:, 2],
+        'iso_rating_x': iso_ratings_x,
+        'iso_rating_y': iso_ratings_y,
+        'iso_rating_z': iso_ratings_z
+    })
+
+    csv_save_path = save_plot_dir / "evaluation_summary.csv"
+    summary_df.to_csv(csv_save_path, index=False, float_format='%.4f')
+    logger.info(f"评估结果汇总表已保存至: {csv_save_path}")
+
+    # <--- 绘制波形比较图 --->
+    logger.info("正在根据配置筛选并绘制波形对比图...")
+    
+    # 准备目标ID集合和阈值
+    target_ids_set = set(PLOT_WAVEFORM_CONFIG['target_case_ids'])
+    low_score_thresh = PLOT_WAVEFORM_CONFIG['low_score_threshold']
+    plot_low_score = PLOT_WAVEFORM_CONFIG['plot_low_score']
+    export_excel_ids_set = set(EXPORT_EXCEL_CASE_IDS)
+    plot_count = 0
+    for i in tqdm(range(len(filtered_indices)), desc="Plotting Waveforms"):
+        c_id = filtered_case_ids[i]
+        iso_x = iso_ratings_x[i]
+        
+        # 判断是否需要绘图: 指定ID 或 (开启低分检测 且 分数低于阈值)
+        should_plot = (c_id in target_ids_set) or (plot_low_score and iso_x < low_score_thresh)
+        
+        if should_plot:
+            # 准备参数字典
+            raw_p = filtered_raw_params[i]
+            params_dict = {'vel': raw_p[0], 'ang': raw_p[1], 'ov': raw_p[2]}
+            
+            # 准备 ISO 评分字典
+            iso_dict = {
+                'x': iso_ratings_x[i],
+                'y': iso_ratings_y[i],
+                'z': iso_ratings_z[i]
+            }
+            
+            # 获取来源文件名
+            src_file = filtered_source_files[i]
+            
+            # 调用绘图工具
+            # 技巧: 将 source_file 传给 epoch 参数，使其显示在标题中 "Epoch: packaged_data_test.npz"
+            # 图片将保存在 run_root_dir/fig/epoch_{src_file}/ 下，自动按来源文件分类文件夹
+            plot_waveform_comparison(
+                pred_wave=all_pred_waveforms_orig[i], # Tensor
+                true_wave=filtered_true_waveforms[i], # Numpy
+                params=params_dict,
+                case_id=c_id,
+                epoch=src_file, 
+                batch_idx='', 
+                sample_idx='',
+                save_dir=run_root_dir, 
+                iso_ratings=iso_dict
+            )
+            plot_count += 1
+
+        # <--- 保存指定 Case 到 Excel --->
+        if c_id in export_excel_ids_set:
+            save_case_to_excel(
+                pred_wave=all_pred_waveforms_orig[i], # Tensor
+                true_wave=filtered_true_waveforms[i], # Numpy
+                case_id=c_id,
+                save_dir=run_root_dir
+            )
+    logger.info(f"波形绘图完成，共绘制 {plot_count} 张图片。保存在 {run_root_dir}/fig 目录下。")
+
     # --- 8. 准备绘图数据 ---
     plot_x_data = filtered_raw_params[:, X_AXIS_PARAM_INDEX]
     plot_y_data = filtered_raw_params[:, Y_AXIS_PARAM_INDEX]
 
-# --- 9. 绘图并保存 ---
+    # --- 9. 绘图并保存 ---
     filter_desc = SPECIFIC_CASE_CONFIG['description']
     
     # 绘制 X-Rating
