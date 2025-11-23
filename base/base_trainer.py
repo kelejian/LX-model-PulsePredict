@@ -112,6 +112,7 @@ class BaseTrainer:
             'epoch': epoch,
             'state_dict': self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
+            'lr_scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None, # add lr_scheduler state dict
             'monitor_best': self.mnt_best,
             'config': self.config
         }
@@ -148,5 +149,12 @@ class BaseTrainer:
                                 "Optimizer parameters not being resumed.")
         else:
             self.optimizer.load_state_dict(checkpoint['optimizer'])
+        # load lr_scheduler state from checkpoint
+        if 'lr_scheduler' in checkpoint and checkpoint['lr_scheduler'] is not None:
+            if self.lr_scheduler is not None:
+                self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+                self.logger.info("LR Scheduler state loaded.")
+        else:
+            self.logger.warning("Warning: LR Scheduler state is missing in checkpoint. " "Scheduler will start from initial state.")   
 
         self.logger.info("Checkpoint loaded. Resume training from epoch {}".format(self.start_epoch))

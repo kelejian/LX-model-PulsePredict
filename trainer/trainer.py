@@ -71,7 +71,11 @@ class Trainer(BaseTrainer):
 
             if batch_idx == self.len_epoch:
                 break
-                
+
+        # <--- 在每个训练 Epoch 结束时记录权重直方图 --->
+        for name, p in self.model.named_parameters():
+            self.writer.add_histogram(name, p, bins='auto')
+            
         log = self.train_metrics.result()
 
         if self.do_validation:
