@@ -147,7 +147,7 @@ python interfere_data.py
 
 * `name`: 实验名称，用于创建文件夹。
 * `arch`: 定义模型架构。
-    * `type`: 模型类名，如 `PulseCNN` 或 `PulseMLP`。
+    * `type`: 模型类名，如 `PulseCNN`
     * `args`: 模型的初始化参数，如 `GauNll_use` (是否使用高斯NLLLoss)。
 * `data_loader_train` / `data_loader_test`: 数据加载器的配置。
     * `packaged_data_path`: 数据文件路径。

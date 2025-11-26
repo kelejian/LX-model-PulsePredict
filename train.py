@@ -12,7 +12,7 @@ import model.metric as module_metric
 import model.model as module_arch
 from parse_config import ConfigParser
 from trainer import Trainer
-from utils import prepare_device
+from utils import prepare_device, get_parameter_groups
 
 
 # fix random seeds for reproducibility
@@ -66,8 +66,9 @@ def main(config):
     metrics = [getattr(module_metric, met) for met in config['metrics']]
 
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
-    trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-    optimizer = config.init_obj('optimizer', torch.optim, trainable_params)
+    # trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+    param_groups = get_parameter_groups(model) # 获取参数分组
+    optimizer = config.init_obj('optimizer', torch.optim, param_groups)
     lr_scheduler = config.init_obj('lr_scheduler', torch.optim.lr_scheduler, optimizer)
 
     trainer = Trainer(model, criterions, metrics, optimizer,

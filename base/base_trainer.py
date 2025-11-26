@@ -2,7 +2,7 @@ import torch
 from abc import abstractmethod
 from numpy import inf
 from logger import TensorboardWriter
-
+import numpy as np
 
 class BaseTrainer:
     """
@@ -114,7 +114,10 @@ class BaseTrainer:
             'optimizer': self.optimizer.state_dict(),
             'lr_scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler is not None else None, # add lr_scheduler state dict
             'monitor_best': self.mnt_best,
-            'config': self.config
+            'config': self.config,
+            'rng_state': torch.get_rng_state(),
+            'cuda_rng_state': torch.cuda.get_rng_state_all(),
+            'numpy_rng_state': np.random.get_state()
         }
         if epoch % save_period == 0:
             filename = str(self.checkpoint_dir / 'checkpoint-epoch{}.pth'.format(epoch))
@@ -156,5 +159,9 @@ class BaseTrainer:
                 self.logger.info("LR Scheduler state loaded.")
         else:
             self.logger.warning("Warning: LR Scheduler state is missing in checkpoint. " "Scheduler will start from initial state.")   
+        if 'rng_state' in checkpoint:
+            torch.set_rng_state(checkpoint['rng_state'])
+            torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
+            np.random.set_state(checkpoint['numpy_rng_state'])
 
         self.logger.info("Checkpoint loaded. Resume training from epoch {}".format(self.start_epoch))

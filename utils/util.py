@@ -7,6 +7,8 @@ from collections import OrderedDict
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import torch
+import torch.nn as nn
 
 def ensure_dir(dirname):
     dirname = Path(dirname)
@@ -134,6 +136,7 @@ def inverse_transform(pred_tensor, target_tensor, scaler):
     target_orig = torch.from_numpy(target_orig).to(target_tensor.device)
     
     return pred_orig, target_orig
+
 class InputScaler:
     def __init__(self, v_min=25, v_max=65, a_abs_max=45, o_abs_max=1):
         '''
@@ -159,6 +162,7 @@ class InputScaler:
         angle = norm_angle * self.a_abs_max
         overlap = norm_overlap * self.o_abs_max
         return velocity, angle, overlap
+    
 class PulseAbsMaxScaler:
     """
     一个自定义的Scaler，执行 x / max(abs(x)) 的归一化。
@@ -196,6 +200,30 @@ class PulseAbsMaxScaler:
             raise RuntimeError("Scaler has not been fitted yet. Call a.fit(data) first.")
         return data * self.data_abs_max_
 
+def get_parameter_groups(model):
+    """
+    将参数分为“衰减组”和“不衰减组”。
+    判断依据：参数维度 < 2 的（如 Bias, BN/LN 的 weight/bias）不进行衰减。
+    """
+    decay_params = []
+    no_decay_params = []
+    
+    # 遍历所有需要梯度的参数
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+            
+        # param.ndim < 2 覆盖了所有 bias (1D) 和 Norm层参数 (1D)
+        # 这种方式比判断 name 字符串更鲁棒，适配所有标准层
+        if param.ndim < 2:
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+
+    return [
+        {'params': decay_params},                       # 继承配置中的全局 weight_decay
+        {'params': no_decay_params, 'weight_decay': 0.0} # 强制 weight_decay = 0
+    ]
 
 def plot_waveform_comparison(pred_wave, true_wave, params, case_id, epoch, batch_idx, sample_idx, save_dir, iso_ratings=None):
     """
