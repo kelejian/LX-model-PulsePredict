@@ -30,7 +30,7 @@ plt.rcParams['axes.unicode_minus'] = False    # 负号正常显示
 # --------------------------------------------------------------------------------------
 # 指定要加载的模型检查点 (.pth) 文件路径
 CHECKPOINT_PATH = (
-    r"E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\LX-model-PulsePredict\saved\models\PulseCNN_GauNLL\1120_121535\resume_1120_124526\model_best.pth"
+    r"E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\LX-model-PulsePredict\saved\models\HybridPulseCNN\1126_212510\resume_1126_220038\model_best_final.pth"
 )
 
 # 指定要分析的数据集 (.npz) 文件路径 (例如，测试集或包含所有工况的完整数据集)
@@ -78,7 +78,7 @@ BATCH_SIZE = 512
 # ISO Rating 的颜色映射范围 (vmin, vmax)
 ISO_RATING_RANGE_X = (0.5, 1.0)  # X 轴范围
 ISO_RATING_RANGE_Y = (0.1, 0.9)  # Y 轴范围
-ISO_RATING_RANGE_Z = (0, 0.6)  # Z 轴范围
+ISO_RATING_RANGE_Z = (0, 0.8)  # Z 轴范围
 
 PLOT_WAVEFORM_CONFIG = {
     'target_case_ids': [5254,6878,8172,4532,698,918,58,2542,3078,1153,1976,2068,4120,1043,7760],     # 指定要强制绘图的 case_id 列表，例如 [10, 25]
@@ -96,7 +96,7 @@ COMBINED_PLOT_CONFIG = {
         # 每个组将绘制在一张图上
         {
             'case_ids': list(np.arange(9027,9042)),  # 第一组工况ID
-            'group_name': 'Group_1'  # 组名，用于文件命名
+            'group_name': 'overlap change'  # 组名，用于文件命名
         },
         # {
         #     'case_ids': [4532, 698, 918],  # 第二组工况ID
@@ -496,12 +496,7 @@ def main():
             output = model(batch_data)
             
             # 提取用于评估的输出 (通常是均值)
-            if model_arch_type == 'PulseMLP':
-                metrics_output = model.get_metrics_output(output)
-            elif model_arch_type == 'PulseCNN':
-                metrics_output = model.get_metrics_output(output)
-            else:
-                metrics_output = output[0][-1] if GauNll_use else output[-1]
+            metrics_output = model.get_metrics_output(output)
             # ---------------------------------------------------
 
             # 逆变换到物理尺度
@@ -540,22 +535,22 @@ def main():
     logger.info("ISO Ratings 计算完成。")
 
     # <--- 保存结果到 CSV 表格 --->
-    # import pandas as pd
+    import pandas as pd
     
-    # summary_df = pd.DataFrame({
-    #     'case_id': filtered_case_ids,
-    #     'source_file': filtered_source_files,
-    #     'velocity': filtered_raw_params[:, 0],
-    #     'angle': filtered_raw_params[:, 1],
-    #     'overlap': filtered_raw_params[:, 2],
-    #     'iso_rating_x': iso_ratings_x,
-    #     'iso_rating_y': iso_ratings_y,
-    #     'iso_rating_z': iso_ratings_z
-    # })
+    summary_df = pd.DataFrame({
+        'case_id': filtered_case_ids,
+        'source_file': filtered_source_files,
+        'velocity': filtered_raw_params[:, 0],
+        'angle': filtered_raw_params[:, 1],
+        'overlap': filtered_raw_params[:, 2],
+        'iso_rating_x': iso_ratings_x,
+        'iso_rating_y': iso_ratings_y,
+        'iso_rating_z': iso_ratings_z
+    })
 
-    # csv_save_path = save_plot_dir / "evaluation_summary.csv"
-    # summary_df.to_csv(csv_save_path, index=False, float_format='%.4f')
-    # logger.info(f"评估结果汇总表已保存至: {csv_save_path}")
+    csv_save_path = save_plot_dir / "evaluation_summary.csv"
+    summary_df.to_csv(csv_save_path, index=False, float_format='%.4f')
+    logger.info(f"评估结果汇总表已保存至: {csv_save_path}")
 
     # <--- 绘制波形比较图 --->
     logger.info("正在根据配置筛选并绘制波形对比图...")
@@ -566,53 +561,53 @@ def main():
     plot_low_score = PLOT_WAVEFORM_CONFIG['plot_low_score']
     export_excel_ids_set = set(EXPORT_EXCEL_CASE_IDS)
     plot_count = 0
-    # for i in tqdm(range(len(filtered_indices)), desc="Plotting Waveforms"):
-    #     c_id = filtered_case_ids[i]
-    #     iso_x = iso_ratings_x[i]
+    for i in tqdm(range(len(filtered_indices)), desc="Plotting Waveforms"):
+        c_id = filtered_case_ids[i]
+        iso_x = iso_ratings_x[i]
         
-    #     # 判断是否需要绘图: 指定ID 或 (开启低分检测 且 分数低于阈值)
-    #     should_plot = (c_id in target_ids_set) or (plot_low_score and iso_x < low_score_thresh)
+        # 判断是否需要绘图: 指定ID 或 (开启低分检测 且 分数低于阈值)
+        should_plot = (c_id in target_ids_set) or (plot_low_score and iso_x < low_score_thresh)
         
-    #     if should_plot:
-    #         # 准备参数字典
-    #         raw_p = filtered_raw_params[i]
-    #         params_dict = {'vel': raw_p[0], 'ang': raw_p[1], 'ov': raw_p[2]}
+        if should_plot:
+            # 准备参数字典
+            raw_p = filtered_raw_params[i]
+            params_dict = {'vel': raw_p[0], 'ang': raw_p[1], 'ov': raw_p[2]}
             
-    #         # 准备 ISO 评分字典
-    #         iso_dict = {
-    #             'x': iso_ratings_x[i],
-    #             'y': iso_ratings_y[i],
-    #             'z': iso_ratings_z[i]
-    #         }
+            # 准备 ISO 评分字典
+            iso_dict = {
+                'x': iso_ratings_x[i],
+                'y': iso_ratings_y[i],
+                'z': iso_ratings_z[i]
+            }
             
-    #         # 获取来源文件名
-    #         src_file = filtered_source_files[i]
+            # 获取来源文件名
+            src_file = filtered_source_files[i]
             
-    #         # 调用绘图工具
-    #         # 技巧: 将 source_file 传给 epoch 参数，使其显示在标题中 "Epoch: packaged_data_test.npz"
-    #         # 图片将保存在 run_root_dir/fig/epoch_{src_file}/ 下，自动按来源文件分类文件夹
-    #         plot_waveform_comparison(
-    #             pred_wave=all_pred_waveforms_orig[i], # Tensor
-    #             true_wave=filtered_true_waveforms[i], # Numpy
-    #             params=params_dict,
-    #             case_id=c_id,
-    #             epoch=src_file, 
-    #             batch_idx='', 
-    #             sample_idx='',
-    #             save_dir=run_root_dir, 
-    #             iso_ratings=iso_dict
-    #         )
-    #         plot_count += 1
+            # 调用绘图工具
+            # 技巧: 将 source_file 传给 epoch 参数，使其显示在标题中 "Epoch: packaged_data_test.npz"
+            # 图片将保存在 run_root_dir/fig/epoch_{src_file}/ 下，自动按来源文件分类文件夹
+            plot_waveform_comparison(
+                pred_wave=all_pred_waveforms_orig[i], # Tensor
+                true_wave=filtered_true_waveforms[i], # Numpy
+                params=params_dict,
+                case_id=c_id,
+                epoch=src_file, 
+                batch_idx='', 
+                sample_idx='',
+                save_dir=run_root_dir, 
+                iso_ratings=iso_dict
+            )
+            plot_count += 1
 
-    #     # <--- 保存指定 Case 到 Excel --->
-    #     if c_id in export_excel_ids_set:
-    #         save_case_to_excel(
-    #             pred_wave=all_pred_waveforms_orig[i], # Tensor
-    #             true_wave=filtered_true_waveforms[i], # Numpy
-    #             case_id=c_id,
-    #             save_dir=run_root_dir
-    #         )
-    # logger.info(f"波形绘图完成,共绘制 {plot_count} 张图片。保存在 {run_root_dir}/fig 目录下。")
+        # <--- 保存指定 Case 到 Excel --->
+        if c_id in export_excel_ids_set:
+            save_case_to_excel(
+                pred_wave=all_pred_waveforms_orig[i], # Tensor
+                true_wave=filtered_true_waveforms[i], # Numpy
+                case_id=c_id,
+                save_dir=run_root_dir
+            )
+    logger.info(f"波形绘图完成,共绘制 {plot_count} 张图片。保存在 {run_root_dir}/fig 目录下。")
 
     # <--- 新增: 组合波形绘图 --->
     if COMBINED_PLOT_CONFIG['enabled'] and COMBINED_PLOT_CONFIG['case_groups']:

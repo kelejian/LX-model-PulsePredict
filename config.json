@@ -17,7 +17,7 @@
         "type": "CollisionDataLoader",
         "args": {
             "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1111_6134/packaged_data_train.npz",
-            "batch_size": 128,
+            "batch_size": 64,
             "shuffle": true,
             "validation_split": 0,
             "num_workers": 0,
@@ -42,8 +42,8 @@
     "optimizer": {
         "type": "AdamW",
         "args": {
-            "lr": 1.5e-4,
-            "weight_decay": 0.005
+            "lr": 1.2e-4,
+            "weight_decay": 1e-3
         }
     },
 
@@ -51,7 +51,7 @@
         {
             "type": "MultiLoss",
             "weight": 0.7,
-            "channel_weights": [1.0, 0.5, 0.01], 
+            "channel_weights": [1.0, 0.5, 0.02], 
             "args": {
                 "loss_weights": [0.1, 1.0, 5.0],
                 "base_loss_type": "GaussianNLLLoss",
@@ -64,7 +64,7 @@
         {
             "type": "CorridorLoss",
             "weight": 2.0,
-            "channel_weights": [1.0, 0.7, 0.1],
+            "channel_weights": [1.0, 0.7, 0.3],
             "args": {
                 "inner_corridor_width": 0.05,
                 "exponent": 2.0
@@ -92,7 +92,7 @@
         },
         {
             "type": "InitialLoss",
-            "weight": 0.4, 
+            "weight": 0.3, 
             "channel_weights": [1.0, 0.5, 0.5],
             "args": {
                 "percentage": 0.04,
@@ -123,17 +123,17 @@
     "lr_scheduler": {
         "type": "CosineAnnealingLR",
         "args": {
-            "T_max": 120,
-            "eta_min": 2e-7
+            "T_max": 110,
+            "eta_min": 0
         }
     },
     "trainer": {
-        "epochs": 120,
+        "epochs": 110,
         "save_dir": "saved/",
         "save_period": 10,
         "verbosity": 2,
         "monitor": "max iso_rating_x",
-        "early_stop": 200,
+        "early_stop": 20,
         "tensorboard": true
     }
 }
