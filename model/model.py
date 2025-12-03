@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -42,51 +43,105 @@ class ResMLPBlock(nn.Module):
 
 class SeedFeatureProjector(nn.Module):
     """
-    高效种子特征投影器
-    
-    用途: 替代巨大的全连接层，先将全局特征映射到低维流形，再通过卷积混合到目标通道
-    策略: 低秩分解 - 降低参数量的同时保持表达能力
-    结构: Linear -> Reshape -> BN -> SiLU -> Dropout -> Conv1x1
-    
-    参数:
+    基于 FiLM (Feature-wise Linear Modulation) 机制: '基函数生成 + 动态调制' 的种子投影器
+    将高维时序生成任务解耦为两个正交的子空间：时序形态子空间（Temporal Shape Subspace） 和 物理强度子空间（Physical Intensity Subspace）
+    结构:
+    1. Basis Branch: PosEnc -> Conv -> Temporal Basis (学习波形的时序形态)
+    2. Coeff Branch: Z -> MLP -> Scale & Shift (学习波形的物理参数)
+    3. Fusion: Basis * (1 + Scale) + Shift
+    parameters:
         z_dim: 输入全局特征维度
-        output_len: 输出序列长度
+        output_len: 输出时序长度
         output_channels: 输出通道数
-        proj_channels: 中间投影通道数（低秩维度）
+        pos_dim: 位置编码维度; 最好大于output_len,以满足DFT基的完备性
+        proj_channels: 投影隐藏层维度
         dropout: Dropout 概率
     """
-    def __init__(self, z_dim, output_len, output_channels, proj_channels=32, dropout=0.1):
+    def __init__(self, z_dim, output_len, output_channels, pos_dim=64, proj_channels=256, dropout=0.1):
         super().__init__()
         self.output_len = output_len
-        self.proj_channels = proj_channels
+        self.pos_dim = pos_dim
         
-        # 低秩线性映射
-        self.linear = nn.Linear(z_dim, output_len * proj_channels, bias=False)
-        self.bn = nn.BatchNorm1d(proj_channels)
-        self.act = nn.SiLU(inplace=True)
-        self.dropout = nn.Dropout(dropout)
+        # 1. 固定正弦位置编码 (作为时序基底的种子)
+        pe = self._generate_sinusoidal_pe(output_len, pos_dim)
+        self.register_buffer('pos_embedding', pe) 
+
+        # 2. 时序基生成分支 (Temporal Basis Branch)
+        # 仅处理位置信息，卷积核较小，参数量少
+        self.basis_net = nn.Sequential(
+            nn.Conv1d(pos_dim, proj_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm1d(proj_channels),
+            nn.SiLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Conv1d(proj_channels, output_channels, kernel_size=3, padding=1, bias=True) 
+            # 输出即为“标准基函数”
+        )
+
+        # 3. 动态调制分支 (Modulation Branch)
+        # 处理全局特征 z，生成 Scale 和 Shift
+        # 输出维度 = output_channels * 2 (一个给Scale，一个给Shift)
+        self.modulator = nn.Sequential(
+            nn.Linear(z_dim, proj_channels),
+            nn.SiLU(inplace=True),
+            nn.Linear(proj_channels, output_channels * 2)
+        )
+
+        self._init_weights()
+
+    def _generate_sinusoidal_pe(self, length, d_model):
+        """生成正弦位置编码"""
+        pe = torch.zeros(length, d_model)
+        position = torch.arange(0, length, dtype=torch.float).unsqueeze(1)
+        Base = 500.0 # PE 的最低频率必须低于或等于信号的基频，1/Base <= 2*Pi / length 
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(Base) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        return pe.transpose(0, 1).unsqueeze(0)
+
+    def _init_weights(self):
+        """显式初始化"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None: nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
+                if m.bias is not None: nn.init.constant_(m.bias, 0)
         
-        # 通道混合层
-        self.mixer = nn.Conv1d(proj_channels, output_channels, kernel_size=1, bias=True)
+        # 特殊初始化：将调制分支的最后一层初始化为0
+        # 使得初始状态下 Scale=0, Shift=0，输出完全由 Basis 决定，梯度流更稳定
+        nn.init.constant_(self.modulator[-1].weight, 0)
+        nn.init.constant_(self.modulator[-1].bias, 0)
 
     def forward(self, z):
         """
-        输入: (B, z_dim)
-        输出: (B, output_channels, output_len)
+        z: (B, z_dim)
+        return: (B, output_channels, output_len)
         """
         B = z.shape[0]
-        # 低秩线性映射: (B, z_dim) -> (B, output_len * proj_channels)
-        x = self.linear(z)
-        # 重塑为序列形式: (B, proj_channels, output_len)
-        x = x.view(B, self.proj_channels, self.output_len)
         
-        # 归一化与激活
-        x = self.act(self.bn(x))
-        x = self.dropout(x)
+        # --- A. 生成时序基 (Basis) ---
+        # 广播 PE: (1, P, L) -> (B, P, L) P: pos_dim, L: output_len
+        pos = self.pos_embedding.expand(B, -1, -1)
+        # 通过卷积生成基函数: (B, C, L) C: output_channels, L: output_len
+        basis = self.basis_net(pos)
         
-        # 通道混合: (B, proj_channels, output_len) -> (B, output_channels, output_len)
-        x = self.mixer(x)
-        return x
+        # --- B. 生成调制系数 (Coefficients) ---
+        # (B, Z) -> (B, 2*C)
+        style = self.modulator(z)
+        # 拆分为 Scale 和 Shift: (B, C)
+        scale, shift = style.chunk(2, dim=1)
+        
+        # 调整形状以进行广播: (B, C, 1)
+        scale = scale.unsqueeze(2)
+        shift = shift.unsqueeze(2)
+        
+        # --- C. 融合 (Modulation) ---
+        # Output = Basis * (1 + Scale) + Shift
+        return basis * (1 + scale) + shift
 
 class BiGRUBottleneck(nn.Module):
     """
@@ -241,37 +296,51 @@ class AdapLengthAlign1D(nn.Module):
 
 class ContextInjection(nn.Module):
     """
-    上下文注入模块
+    基于 FiLM (Feature-wise Linear Modulation) 的上下文注入模块
     
-    用途: 将全局工况特征向量注入到多尺度特征图中
-    方法: 通道拼接 + 1x1 卷积融合
-    结构: Concat -> Conv1x1 -> BN -> SiLU
-    
-    参数:
-        feature_channels: 特征图通道数
-        z_dim: 全局特征维度
+    原理: x_out = (1 + scale(z)) * x_in + shift(z)
+    优势: 
+    1. 显式建模物理参数对波形的乘性调制(缩放)和加性调制(偏移)。
+    2. 计算高效，避免了对拼接后的大通道特征图进行卷积。
     """
     def __init__(self, feature_channels, z_dim):
+        """
+        :param feature_channels: 输入特征图的通道数 (C)
+        :param z_dim: 全局特征 z 的维度 (D)
+        """
         super().__init__()
-        self.fusion = nn.Sequential(
-            nn.Conv1d(feature_channels + z_dim, feature_channels, kernel_size=1, bias=False),
-            nn.BatchNorm1d(feature_channels),
-            nn.SiLU(inplace=True)
-        )
+        
+        # 定义两个投影层，分别用于生成 Scale (gamma) 和 Shift (beta)
+        # 初始化为0，使得初始状态下呈现恒等变换 (Identity Mapping)，利于梯度传播
+        self.scale_proj = nn.Linear(z_dim, feature_channels)
+        self.shift_proj = nn.Linear(z_dim, feature_channels)
+        
+        self._init_weights()
+
+    def _init_weights(self):
+        # 显式将权重和偏置初始化为0
+        # 这样初始输出 scale=0, shift=0 -> out = (1+0)*x + 0 = x
+        nn.init.constant_(self.scale_proj.weight, 0)
+        nn.init.constant_(self.scale_proj.bias, 0)
+        nn.init.constant_(self.shift_proj.weight, 0)
+        nn.init.constant_(self.shift_proj.bias, 0)
 
     def forward(self, x, z_prime):
         """
         输入:
-            x: (B, feature_channels, L) - 特征图
-            z_prime: (B, z_dim) - 全局特征
-        输出: (B, feature_channels, L)
+            x: (B, C, L) - 局部特征图
+            z_prime: (B, D) - 全局工况特征
+        输出:
+            (B, C, L) - 调制后的特征图
         """
-        B, C, L = x.shape
-        # 广播全局特征: (B, z_dim) -> (B, z_dim, L)
-        z_expanded = z_prime.unsqueeze(2).expand(-1, -1, L)
-        # 拼接并融合: (B, feature_channels+z_dim, L) -> (B, feature_channels, L)
-        combined = torch.cat([x, z_expanded], dim=1)    
-        return self.fusion(combined)
+        # 1. 计算调制参数
+        # (B, D) -> (B, C) -> (B, C, 1) 以便广播
+        scale = self.scale_proj(z_prime).unsqueeze(2)
+        shift = self.shift_proj(z_prime).unsqueeze(2)
+        
+        # 2. 应用 FiLM 调制
+        # 采用残差式缩放: (1 + scale) * x + shift
+        return x * (1 + scale) + shift
 
 class ResBlock1D(nn.Module):
     """
@@ -315,24 +384,54 @@ class DeepRegressionHead(nn.Module):
     """
     深层回归头
     
-    用途: 解码最终波形输出
+    功能: 将特征空间映射到物理输出空间 (Mean & Variance)
     设计原则: 移除 BN 和 Dropout，保证回归数值的绝对尺度和连续性
-    结构: Conv3x3 -> SiLU -> Conv3x3 -> SiLU -> Conv1x1
-    
-    参数:
-        in_channels: 输入特征通道数
-        out_channels: 输出通道数（1 或 2，取决于是否使用高斯 NLL）
-        hidden_dim: 隐藏层通道数
     """
-    def __init__(self, in_channels, out_channels=1, hidden_dim=64):
+    def __init__(self, in_channels, out_channels=1, hidden_dim=64, num_layers=2):
+        """
+        :param in_channels: 输入特征通道数
+        :param out_channels: 输出物理量通道数 (1或2)
+        :param hidden_dim: 中间隐藏层通道数
+        :param num_layers: 隐藏层(Conv+Act)的数量。
+                           0 表示纯线性映射 (Conv1x1); 
+                           >=1 表示 num_layers 个中间层 + 1 个输出层。
+        """
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv1d(in_channels, hidden_dim, kernel_size=3, padding=1, bias=True),
-            nn.SiLU(inplace=True),
-            nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1, bias=True),
-            nn.SiLU(inplace=True),
-            nn.Conv1d(hidden_dim, out_channels, kernel_size=1, bias=True) 
-        )
+        
+        layers = []
+        
+        # 如果 num_layers > 0，构建非线性中间层
+        if num_layers > 0:
+            # 第一层: in_channels -> hidden_dim
+            layers.append(nn.Conv1d(in_channels, hidden_dim, kernel_size=3, padding=1, bias=True))
+            layers.append(nn.SiLU(inplace=True))
+            
+            # 后续层: hidden_dim -> hidden_dim
+            for _ in range(num_layers - 1):
+                layers.append(nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1, bias=True))
+                layers.append(nn.SiLU(inplace=True))
+            
+            # 最后一层: hidden_dim -> out_channels (1x1 Conv)
+            layers.append(nn.Conv1d(hidden_dim, out_channels, kernel_size=1, bias=True))
+        else:
+            # 如果 num_layers == 0，直接使用 1x1 卷积进行线性投影
+            layers.append(nn.Conv1d(in_channels, out_channels, kernel_size=1, bias=True))
+
+        self.net = nn.Sequential(*layers)
+        
+        # 显式初始化
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.net.modules():
+            if isinstance(m, nn.Conv1d):
+                # 最后一层通常不需要激活函数增益，保持较小的初始值有助于回归稳定
+                if m == self.net[-1]:
+                    nn.init.normal_(m.weight, mean=0, std=0.01)
+                else:
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         """
@@ -340,6 +439,7 @@ class DeepRegressionHead(nn.Module):
         输出: (B, out_channels, L)
         """
         return self.net(x)
+
 
 # ==========================================================================================
 # 主模型定义 (Hybrid PulseCNN)
@@ -355,26 +455,36 @@ class HybridPulseCNN(BaseModel):
         output_channels: 输出通道数（xyz 三轴）
         mlp_hidden_dim: MLP 编码器隐藏层维度
         seed_proj_channels: 种子投影器中间通道数
+        seed_proj_pe_dim: 种子投影器位置编码维度
         gru_hidden_dim: GRU 隐藏层维度
         gru_layers: GRU 层数
         channel_configs: 各解码阶段的通道配置列表 [Stage1, Stage2, Stage3]
         output_lengths: 各解码阶段的输出长度列表 [L1, L2, L3]
+        decoder_blocks_per_stage: [int, int, int], 控制各阶段 ResBlock 的堆叠数量。
+        head_config: dict, 控制回归头的结构。
         GauNll_use: 是否使用高斯负对数似然损失（输出均值和方差）
     """
     def __init__(self, input_dim=3, output_channels=3, 
-                 mlp_hidden_dim=384, 
-                 seed_proj_channels=32,
+                 mlp_hidden_dim=256, 
+                 seed_proj_channels=256,
+                 seed_proj_pe_dim=64,
                  gru_hidden_dim=128,
                  gru_layers=1,
                  channel_configs=[128, 64, 32],
                  output_lengths=[37, 75, 150],
+                 decoder_blocks_per_stage=[1, 1, 2],
+                 head_config={'hidden_dim': 64, 'num_layers': 2}, 
                  GauNll_use=True):
         super().__init__()
         
         self.GauNll_use = GauNll_use
         self.output_lengths = output_lengths
         self.channel_configs = channel_configs
-
+        
+        # 确保 decoder_blocks_per_stage 长度正确
+        if len(decoder_blocks_per_stage) != 3:
+            raise ValueError("decoder_blocks_per_stage must have length 3 (for 3 stages).")
+        
         # 自动计算各阶段上采样倍率
         self.upscale_factors = []
         for i in range(len(output_lengths) - 1):
@@ -407,7 +517,8 @@ class HybridPulseCNN(BaseModel):
             z_dim=mlp_hidden_dim,
             output_len=self.init_len,
             output_channels=self.gru_input_dim,
-            proj_channels=seed_proj_channels, 
+            pos_dim=seed_proj_pe_dim, 
+            proj_channels=seed_proj_channels,
             dropout=0.1
         )
 
@@ -426,11 +537,21 @@ class HybridPulseCNN(BaseModel):
         # 3. Stage 1: 共享解码器（低分辨率）
         # ========================================================================
         self.s1_context = ContextInjection(channel_configs[0], self.z_dim)
-        self.s1_resblock = ResBlock1D(channel_configs[0], channel_configs[0])
         
-        # 辅助输出头（用于多尺度监督）
+        # 动态堆叠 ResBlocks
+        s1_blocks = []
+        for _ in range(decoder_blocks_per_stage[0]):
+            s1_blocks.append(ResBlock1D(channel_configs[0], channel_configs[0]))
+        self.s1_resblocks = nn.Sequential(*s1_blocks)
+        
+        # 动态构建 Head
         head_out_dim = 2 if GauNll_use else 1
-        self.s1_head = DeepRegressionHead(channel_configs[0], out_channels=output_channels * head_out_dim)
+        self.s1_head = DeepRegressionHead(
+            channel_configs[0], 
+            out_channels=output_channels * head_out_dim,
+            hidden_dim=head_config.get('hidden_dim', 64),
+            num_layers=head_config.get('num_layers', 2)
+        )
 
         # ========================================================================
         # 4. Stage 2: 三叉分支（中等分辨率）
@@ -453,8 +574,19 @@ class HybridPulseCNN(BaseModel):
 
             # 精炼模块
             layers['context'] = ContextInjection(channel_configs[1], self.z_dim)
-            layers['resblock'] = ResBlock1D(channel_configs[1], channel_configs[1])
-            layers['head'] = DeepRegressionHead(channel_configs[1], out_channels=head_out_dim)
+            
+            s2_blocks = []
+            for _ in range(decoder_blocks_per_stage[1]):
+                s2_blocks.append(ResBlock1D(channel_configs[1], channel_configs[1]))
+            layers['resblocks'] = nn.Sequential(*s2_blocks) # 注意这里改名为 resblocks
+            
+            # Head (修改为动态构建)
+            layers['head'] = DeepRegressionHead(
+                channel_configs[1], 
+                out_channels=head_out_dim,
+                hidden_dim=head_config.get('hidden_dim', 64),
+                num_layers=head_config.get('num_layers', 2)
+            )
             self.s2_branches[axis] = layers
 
         # ========================================================================
@@ -468,7 +600,7 @@ class HybridPulseCNN(BaseModel):
 
             # 上采样层
             layers['up_conv'] = nn.Conv1d(channel_configs[1], channel_configs[2] * r2, kernel_size=1, bias=True)
-            icnr_init(layers['up_conv'], upscale_factor=r1) # ICNR 初始化
+            icnr_init(layers['up_conv'], upscale_factor=r2) # ICNR 初始化
             layers['pixel_shuffle'] = PixelShuffle1D(upscale_factor=r2)
             
             # 平滑卷积层
@@ -478,8 +610,19 @@ class HybridPulseCNN(BaseModel):
 
             # 精炼模块
             layers['context'] = ContextInjection(channel_configs[2], self.z_dim)
-            layers['resblock'] = ResBlock1D(channel_configs[2], channel_configs[2])
-            layers['head'] = DeepRegressionHead(channel_configs[2], out_channels=head_out_dim)
+            
+            s3_blocks = []
+            for _ in range(decoder_blocks_per_stage[2]):
+                s3_blocks.append(ResBlock1D(channel_configs[2], channel_configs[2]))
+            layers['resblocks'] = nn.Sequential(*s3_blocks)
+            
+            # Head
+            layers['head'] = DeepRegressionHead(
+                channel_configs[2], 
+                out_channels=head_out_dim,
+                hidden_dim=head_config.get('hidden_dim', 64),
+                num_layers=head_config.get('num_layers', 2)
+            )
             self.s3_branches[axis] = layers
 
     def forward(self, x):
@@ -517,7 +660,7 @@ class HybridPulseCNN(BaseModel):
         # ====================================================================
         # 上下文注入与残差精炼
         f_s1 = self.s1_context(f_s1_in, z_prime)
-        f_s1 = self.s1_resblock(f_s1)
+        f_s1 = self.s1_resblocks(f_s1)
         
         # 输出预测: (B, channel_configs[0], output_lengths[0]) -> (B, output_channels*(1or2), output_lengths[0])
         s1_out = self.s1_head(f_s1)
@@ -546,7 +689,7 @@ class HybridPulseCNN(BaseModel):
             
             # 上下文注入与残差精炼
             feat = layers['context'](feat, z_prime)
-            feat = layers['resblock'](feat)
+            feat = layers['resblocks'](feat)
             
             # 缓存特征用于下一阶段
             f_s2_feats[axis] = feat
@@ -580,7 +723,7 @@ class HybridPulseCNN(BaseModel):
             
             # 上下文注入与残差精炼
             feat = layers['context'](feat, z_prime)
-            feat = layers['resblock'](feat)
+            feat = layers['resblocks'](feat)
             
             # 输出预测: (B, channel_configs[2], output_lengths[2]) -> (B, (1or2), output_lengths[2])
             s3_preds_list.append(layers['head'](feat))
@@ -641,7 +784,7 @@ class HybridPulseCNN(BaseModel):
                 if channel_weights[i] == 0: continue
                 target_channel = target[:, i:i+1, :]
 
-                if hasattr(loss_instance, 'loss_weights'): # 多尺度损失
+                if hasattr(loss_instance, 'scale_loss_weights'): # 多尺度损失
                     if self.GauNll_use:
                         pred_channel = [(stage_out[0][:, i:i+1, :], stage_out[1][:, i:i+1, :]) for stage_out in model_output]
                     else:

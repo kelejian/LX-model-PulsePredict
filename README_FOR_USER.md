@@ -155,7 +155,7 @@ python interfere_data.py
     * `scaler_path`: 归一化 scaler 文件的保存/加载路径。
 * `loss`: 损失函数的配置。
     * `type`: `MultiLoss` (用于CNN) 或 `GaussianNLLLoss` (用于MLP) 等。
-    * `args`: 损失函数的参数，例如 `MultiLoss` 的 `loss_weights` 和 `base_loss_type`。
+    * `args`: 损失函数的参数，例如 `MultiLoss` 的 `scale_loss_weights` 和 `base_loss_type`。
 * `metrics`: 在日志中要追踪的评估指标列表，对应 `model/metric.py` 中的函数名。
 * `trainer`: 训练器的配置。
     * `epochs`: 总训练轮数。

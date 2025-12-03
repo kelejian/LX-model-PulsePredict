@@ -67,7 +67,9 @@ def main(config):
 
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
     # trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-    param_groups = get_parameter_groups(model) # 获取参数分组
+    global_weight_decay = config['optimizer']['args'].get('weight_decay', 1e-3)
+    head_decay_ratio = config['optimizer'].get('head_decay_ratio', 0.1)
+    param_groups = get_parameter_groups(model, global_weight_decay, head_decay_ratio) # get parameter groups with different weight decay
     optimizer = config.init_obj('optimizer', torch.optim, param_groups)
     lr_scheduler = config.init_obj('lr_scheduler', torch.optim.lr_scheduler, optimizer)
 

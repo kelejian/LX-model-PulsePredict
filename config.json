@@ -6,20 +6,23 @@
         "args": {
             "GauNll_use": true,
             "mlp_hidden_dim": 256, 
-            "seed_proj_channels": 32,
+            "seed_proj_channels": 256,
+            "seed_proj_pe_dim": 64,
             "gru_hidden_dim": 128,
             "gru_layers": 1,
             "channel_configs": [128, 64, 32],
-            "output_lengths": [37, 75, 150]
+            "decoder_blocks_per_stage": [1, 1, 2],
+            "output_lengths": [37, 75, 150],
+            "head_config": {"hidden_dim": 64, "num_layers": 2}
         }
     },
     "data_loader_train": {
         "type": "CollisionDataLoader",
         "args": {
             "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1111_6134/packaged_data_train.npz",
-            "batch_size": 64,
+            "batch_size": 128,
             "shuffle": true,
-            "validation_split": 0,
+            "validation_split": 0.1,
             "num_workers": 0,
             "pulse_norm_mode": "absmax",
             "scaler_path": "data_loader/pulse_scaler.joblib",
@@ -44,7 +47,8 @@
         "args": {
             "lr": 1.2e-4,
             "weight_decay": 1e-3
-        }
+        },
+        "head_decay_ratio": 0.05
     },
 
     "loss": [
@@ -53,7 +57,7 @@
             "weight": 0.7,
             "channel_weights": [1.0, 0.5, 0.02], 
             "args": {
-                "loss_weights": [0.1, 1.0, 5.0],
+                "scale_loss_weights": [0, 1.0, 5.0],
                 "base_loss_type": "GaussianNLLLoss",
                 "base_loss_args": {
                     "eps": 1e-06,
@@ -132,7 +136,7 @@
         "save_dir": "saved/",
         "save_period": 10,
         "verbosity": 2,
-        "monitor": "max iso_rating_x",
+        "monitor": "max val_iso_rating_x",
         "early_stop": 20,
         "tensorboard": true
     }

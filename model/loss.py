@@ -63,16 +63,16 @@ class MultiLoss(nn.Module):
     """
     一个通用的多路损失加权求和模块。
     """
-    def __init__(self, loss_weights, base_loss_type, base_loss_args=None):
+    def __init__(self, scale_loss_weights, base_loss_type, base_loss_args=None):
         """
-        :param loss_weights: 一个列表，包含每一路损失的权重。
+        :param scale_loss_weights: 一个列表，包含每一路损失的权重。
         :param base_loss_type: 基础损失函数的类型名称 (字符串)，例如 'GaussianNLLLoss'。
         :param base_loss_args: 一个字典，包含基础损失函数的初始化参数。
         """
         super().__init__()
         if base_loss_args is None:
             base_loss_args = {}
-        self.loss_weights = loss_weights
+        self.scale_loss_weights = scale_loss_weights
         # 使用getattr动态地从本模块(module_loss)中获取损失函数类并实例化
         self.base_loss = getattr(module_loss, base_loss_type)(**base_loss_args)
         
@@ -86,8 +86,8 @@ class MultiLoss(nn.Module):
         :param target_list: 目标值列表，应与 pred_list 中的张量形状一一对应。
         :return: 加权后的总损失标量。
         """
-        if len(self.loss_weights) != len(pred_list):
-            raise ValueError(f"loss_weights (len={len(self.loss_weights)}) 和 pred_list (len={len(pred_list)}) 的长度必须一致。")
+        if len(self.scale_loss_weights) != len(pred_list):
+            raise ValueError(f"scale_loss_weights (len={len(self.scale_loss_weights)}) 和 pred_list (len={len(pred_list)}) 的长度必须一致。")
         
         total_loss = 0
         for i, (pred, target) in enumerate(zip(pred_list, target_list)):
@@ -98,9 +98,9 @@ class MultiLoss(nn.Module):
                 # 适用于标准loss，如 MSELoss(pred, target)
                 loss = self.base_loss(pred, target)
             
-            total_loss += self.loss_weights[i] * loss
+            total_loss += self.scale_loss_weights[i] * loss
             
-        return total_loss / sum(self.loss_weights)
+        return total_loss / sum(self.scale_loss_weights)
 
 class InitialLoss(nn.Module):
     """

@@ -200,12 +200,20 @@ class PulseAbsMaxScaler:
             raise RuntimeError("Scaler has not been fitted yet. Call a.fit(data) first.")
         return data * self.data_abs_max_
 
-def get_parameter_groups(model):
+def get_parameter_groups(model, weight_decay=1e-2, head_decay_ratio=0.1, head_keywords=('head',)):
     """
-    将参数分为“衰减组”和“不衰减组”。
-    判断依据：参数维度 < 2 的（如 Bias, BN/LN 的 weight/bias）不进行衰减。
+    精细化参数分组策略：
+    1. Body Group (高 WD): 维持骨干网络的强正则化，促进平坦解搜索。
+    2. Head Group (低 WD): 降低输出头的正则化惩罚，允许其在训练末期精细拟合目标值。
+    3. No Decay Group (0 WD): Bias 和 Normalization 层参数，保持数值稳定性。
+
+    :param model: 模型实例
+    :param weight_decay: 全局(Body)的权重衰减系数
+    :param head_decay_ratio: Head 部分的 WD 缩放比例 (e.g., 0.1 表示 Head_WD = 0.1 * Body_WD)
+    :param head_keywords: 识别 Head 参数的关键词元组
     """
-    decay_params = []
+    decay_body_params = []
+    decay_head_params = []
     no_decay_params = []
     
     # 遍历所有需要梯度的参数
@@ -213,16 +221,26 @@ def get_parameter_groups(model):
         if not param.requires_grad:
             continue
             
-        # param.ndim < 2 覆盖了所有 bias (1D) 和 Norm层参数 (1D)
-        # 这种方式比判断 name 字符串更鲁棒，适配所有标准层
+        # 1. 不衰减组: 维度 < 2 的参数 (覆盖所有 Bias, BN/LN 的 weight/bias)
         if param.ndim < 2:
             no_decay_params.append(param)
         else:
-            decay_params.append(param)
+            # 2. 衰减组: 根据名称区分 Body 和 Head
+            # HybridPulseCNN 中输出头命名均包含 'head' (e.g., s1_head, s3_branches.x.head)
+            if any(k in name for k in head_keywords):
+                decay_head_params.append(param)
+            else:
+                decay_body_params.append(param)
 
     return [
-        {'params': decay_params},                       # 继承配置中的全局 weight_decay
-        {'params': no_decay_params, 'weight_decay': 0.0} # 强制 weight_decay = 0
+        # Group 1: Body weights (High Decay)
+        {'params': decay_body_params, 'weight_decay': weight_decay},
+        
+        # Group 2: Head weights (Low Decay)
+        {'params': decay_head_params, 'weight_decay': weight_decay * head_decay_ratio},
+        
+        # Group 3: Bias/Norm (No Decay)
+        {'params': no_decay_params, 'weight_decay': 0.0}
     ]
 
 def plot_waveform_comparison(pred_wave, true_wave, params, case_id, epoch, batch_idx, sample_idx, save_dir, iso_ratings=None):
