@@ -16,17 +16,6 @@ class BaseModel(nn.Module):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    def compute_loss(self, model_output, target, criterion):
-        """
-        Computes the loss for the model.
-
-        :param model_output: The output from the forward pass.
-        :param target: The ground truth target.
-        :param criterion: The loss function.
-        :return: The computed loss value.
-        """
-        raise NotImplementedError
 
     @abstractmethod
     def get_metrics_output(self, model_output):

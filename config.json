@@ -20,7 +20,7 @@
         "type": "CollisionDataLoader",
         "args": {
             "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1111_6134/packaged_data_train.npz",
-            "batch_size": 64,
+            "batch_size": 128,
             "shuffle": true,
             "validation_split": 0.1,
             "num_workers": 0,
@@ -57,85 +57,93 @@
     "optimizer": {
         "type": "AdamW",
         "args": {
-            "lr": 1e-3,
-            "weight_decay": 4e-3
+            "lr": 1.2e-3,
+            "weight_decay": 5e-3
         },
-        "head_decay_ratio": 0.02
+        "head_decay_ratio": 0.05
     },
 
-    "loss": [
-        {
-            "type": "MultiLoss",
-            "weight": 0.7,
-            "channel_weights": [1.0, 0.5, 0.02], 
-            "args": {
-                "scale_loss_weights": [0, 1.0, 5.0],
-                "base_loss_type": "GaussianNLLLoss",
-                "base_loss_args": {
-                    "eps": 1e-06,
-                    "reduction": "mean"
+    "loss": {
+        "type": "AutoWeightedLoss",
+        "args": {
+            "loss_configs": [
+                {
+                    "type": "MultiScaleLoss",
+                    "prior_weight": 0.8,
+                    "args": {
+                        "scale_weights": [0, 1.0, 5.0],
+                        "base_loss_type": "GaussianNLLLoss",
+                        "base_loss_args": { "eps": 1e-06, "reduction": "none" },
+                        "channel_weights": [1.0, 0.5, 0.02]
+                    }
+                },
+                {
+                    "type": "CorridorLoss",
+                    "prior_weight": 2.0,
+                    "args": {
+                        "inner_corridor_width": 0.05,
+                        "exponent": 2.0,
+                        "channel_weights": [1.0, 0.7, 0.3]
+                    }
+                },
+                {
+                    "type": "SlopeLoss",
+                    "prior_weight": 0.2,
+                    "args": {
+                        "apply_smoothing": false,
+                        "smoothing_window_size": 5,
+                        "channel_weights": [1.0, 0.5, 0.02]
+                    }
+                },
+                {
+                    "type": "PhaseLoss",
+                    "prior_weight": 1.0,
+                    "args": {
+                        "n_fft": 64,
+                        "hop_length": 16,
+                        "win_length": 64,
+                        "channel_weights": [1.0, 0.5, 0.05]
+                    }
+                },
+                {
+                    "type": "InitialLoss",
+                    "prior_weight": 0.1,
+                    "args": {
+                        "percentage": 0.04,
+                        "weight_target": 0.5,
+                        "channel_weights": [1.0, 0.5, 0.5]
+                    }
+                },
+                {
+                    "type": "TerminalLoss",
+                    "prior_weight": 0.01,
+                    "args": {
+                        "percentage": 0.04,
+                        "weight_target": 2.0,
+                        "channel_weights": [0.1, 0.5, 0.5]
+                    }
+                },
+                {
+                    "type": "VelocityLoss",
+                    "prior_weight": 0.5,
+                    "args": {
+                        "dt": 0.001,
+                        "loss_type": "MSELoss",
+                        "channel_weights": [1.0, 0.5, 0.2]
+                    }
+                },
+                {
+                    "type": "DeltaVLoss",
+                    "prior_weight": 0.2,
+                    "args": {
+                        "dt": 0.001,
+                        "loss_type": "MSELoss",
+                        "channel_weights": [1.0, 0.4, 0.1]
+                    }
                 }
-            }
-        },
-        {
-            "type": "CorridorLoss",
-            "weight": 2.0,
-            "channel_weights": [1.0, 0.7, 0.3],
-            "args": {
-                "inner_corridor_width": 0.05,
-                "exponent": 2.0
-            }
-        },
-        {
-            "type": "SlopeLoss",
-            "weight": 2.0,
-            "channel_weights": [1.0, 0.5, 0.02],
-            "args": {
-                "reduction": "mean",
-                "apply_smoothing": false,
-                "smoothing_window_size": 5
-            }
-        },
-        {
-            "type": "PhaseLoss",
-            "weight": 1.0,
-            "channel_weights": [1.0, 0.5, 0.05],
-            "args": {
-                "n_fft": 64,
-                "hop_length": 16,
-                "win_length": 64
-            }
-        },
-        {
-            "type": "InitialLoss",
-            "weight": 0.2, 
-            "channel_weights": [1.0, 0.5, 0.5],
-            "args": {
-                "percentage": 0.04,
-                "weight_target": 0.5,
-                "loss_type": "mae"
-            }
-        },
-        {
-            "type": "TerminalLoss",
-            "weight": 0.02,
-            "channel_weights": [0.1, 0.5, 0.5],
-            "args": {
-                "percentage": 0.04,
-                "weight_target": 2.0,
-                "loss_type": "mae"
-            }
-        },
-        {
-            "type": "VelocityLoss",
-            "weight": 1e4, 
-            "channel_weights": [1.0, 0.4, 0.1], 
-            "args": {
-                "dt": 0.001,
-                "loss_type": "mse"
-            }
+            ]
         }
-    ],
+    },
 
     "metrics": [
         "rmse_x",
@@ -148,15 +156,15 @@
     "lr_scheduler": {
         "type": "CosineAnnealingLR",
         "args": {
-            "T_max": 120,
+            "T_max": 150,
             "eta_min": 0
         }
     },
     "trainer": {
-        "epochs": 120,
+        "epochs": 150,
         "save_dir": "saved/",
-        "save_period": 10,
-        "verbosity": 2,
+        "save_period": 20,
+        "verbosity": 1,
         "monitor": "max val_iso_rating_x",
         "early_stop": 30,
         "tensorboard": true

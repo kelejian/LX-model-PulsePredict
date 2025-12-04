@@ -27,8 +27,9 @@ class Trainer(BaseTrainer):
         len_epoch = len(self.data_loader)
         self.log_step = max(1, len_epoch // 5)
         
-        # +++ 从配置中动态获取各项loss的名称用于监控 +++
-        loss_names_to_track = [type(item['instance']).__name__ for item in self.criterion]
+        # loss_names_to_track = [type(item['instance']).__name__ for item in self.criterion] # Old: 从配置中动态获取各项loss的名称用于监控
+        # 从 AutoWeightedLoss 实例中直接获取 Loss 名称列表
+        loss_names_to_track = self.criterion.loss_names
 
         self.train_metrics = MetricTracker('loss', *loss_names_to_track, *[m.__name__ for m in self.metric_ftns], writer=self.writer)
         self.valid_metrics = MetricTracker('loss', *loss_names_to_track, *[m.__name__ for m in self.metric_ftns], writer=self.writer)
@@ -47,7 +48,7 @@ class Trainer(BaseTrainer):
             self.optimizer.zero_grad()
             
             output = self.model(data)
-            loss, loss_components = self.model.compute_loss(output, target, self.criterion)
+            loss, loss_components = self.criterion(output, target)
 
             loss.backward()
             self.optimizer.step()
@@ -99,7 +100,7 @@ class Trainer(BaseTrainer):
                 data, target = data.to(self.device), target.to(self.device)
 
                 output = self.model(data)
-                loss, loss_components = self.model.compute_loss(output, target, self.criterion)
+                loss, loss_components = self.criterion(output, target)
 
                 self.writer.set_step((epoch - 1) * len(self.valid_data_loader) + batch_idx, 'valid')
                 # 更新总损失和各项损失到MetricTracker

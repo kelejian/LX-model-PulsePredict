@@ -46,22 +46,7 @@ def main(config):
         model = torch.nn.DataParallel(model, device_ids=device_ids)
 
     # get function handles of loss and metrics
-    criterions = []
-    if 'loss' in config.config and isinstance(config['loss'], list):
-        for loss_spec in config['loss']:
-            # Use a trick with init_ftn to handle configs with 'type' and 'args'
-            loss_module_name = loss_spec['type']
-            loss_module_args = loss_spec.get('args', {})
-            loss_instance = getattr(module_loss, loss_module_name)(**loss_module_args)
-            criterions.append({
-                'instance': loss_instance,
-                'weight': loss_spec.get('weight', 1.0),  # Default weight is 1.0
-                'channel_weights': loss_spec.get('channel_weights',  [1, 1, 1])  # Default channel weights is [1, 1, 1]
-            })
-    else:
-        # Fallback for old config format for compatibility
-        criterion_instance = config.init_obj('loss', module_loss)
-        criterions.append({'instance': criterion_instance, 'weight': 1.0})
+    criterion = config.init_obj('loss', module_loss).to(device) # 注意.to(device)
 
     metrics = [getattr(module_metric, met) for met in config['metrics']]
 
@@ -73,7 +58,7 @@ def main(config):
     optimizer = config.init_obj('optimizer', torch.optim, param_groups)
     lr_scheduler = config.init_obj('lr_scheduler', torch.optim.lr_scheduler, optimizer)
 
-    trainer = Trainer(model, criterions, metrics, optimizer,
+    trainer = Trainer(model, criterion, metrics, optimizer,
                       config=config,
                       device=device,
                       data_loader=data_loader,

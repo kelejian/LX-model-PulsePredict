@@ -752,18 +752,6 @@ class HybridPulseCNN(BaseModel):
             return (mean, var)
         else:
             return raw_out
-
-    # =========================================================================
-    # 损失与评估接口
-    # =========================================================================
-    def compute_loss(self, model_output, target, criterion):
-        """
-        计算损失的统一接口。
-        
-        :param criterion: 实例化后的 AutoWeightedLoss 对象
-        :return: (total_loss, loss_dict)
-        """
-        return criterion(model_output, target)
     
     def get_metrics_output(self, model_output):
         """

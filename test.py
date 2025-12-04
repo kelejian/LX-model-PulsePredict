@@ -76,21 +76,7 @@ def main(config):
     logger.info(model)
 
     # get function handles of loss and metrics
-    loss_fns = []
-    if 'loss' in config.config and isinstance(config['loss'], list):
-        for loss_spec in config['loss']:
-            loss_module_name = loss_spec['type']
-            loss_module_args = loss_spec.get('args', {})
-            loss_instance = getattr(module_loss, loss_module_name)(**loss_module_args)
-            loss_fns.append({
-                'instance': loss_instance,
-                'weight': loss_spec.get('weight', 1.0),
-                'channel_weights': loss_spec.get('channel_weights', [1.0, 1.0, 1.0])
-            })
-    else:
-        # 兼容旧格式的配置文件
-        criterion_instance = config.init_obj('loss', module_loss)
-        loss_fns.append({'instance': criterion_instance, 'weight': 1.0})
+    criterion = config.init_obj('loss', module_loss).to(device)
 
     metric_fns = [getattr(module_metric, met) for met in config['metrics']]
 
@@ -120,7 +106,7 @@ def main(config):
             data, target = data.to(device), target.to(device)
             # ------------------- 使用统一的模型接口 ----------------------
             output = model(data)
-            loss, loss_components = model.compute_loss(output, target, loss_fns)
+            loss, loss_components = criterion(output, target)
             metrics_output = model.get_metrics_output(output)
             # ------------------------------------------------------------
             
