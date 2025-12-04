@@ -20,13 +20,19 @@
         "type": "CollisionDataLoader",
         "args": {
             "packaged_data_path": "E:/WPS Office/1628575652/WPS企业云盘/清华大学/我的企业文档/课题组相关/理想项目/仿真数据库相关/VCS波形数据集打包/acc_data_before1111_6134/packaged_data_train.npz",
-            "batch_size": 128,
+            "batch_size": 64,
             "shuffle": true,
             "validation_split": 0.1,
             "num_workers": 0,
             "pulse_norm_mode": "absmax",
             "scaler_path": "data_loader/pulse_scaler.joblib",
-            "training": true
+            "training": true,
+            "physics_bounds": {
+                "v_min": 23.5,
+                "v_max": 65,
+                "a_abs_max": 45,
+                "o_abs_max": 1
+            }
         }
     },
     "data_loader_test": {
@@ -39,16 +45,22 @@
             "num_workers": 0,
             "pulse_norm_mode": "absmax",
             "scaler_path": "data_loader/pulse_scaler.joblib",
-            "training": false
+            "training": false,
+            "physics_bounds": {
+                "v_min": 23.5,
+                "v_max": 65,
+                "a_abs_max": 45,
+                "o_abs_max": 1
+            }
         }
     },
     "optimizer": {
         "type": "AdamW",
         "args": {
-            "lr": 1.2e-4,
-            "weight_decay": 1e-3
+            "lr": 1e-3,
+            "weight_decay": 4e-3
         },
-        "head_decay_ratio": 0.05
+        "head_decay_ratio": 0.02
     },
 
     "loss": [
@@ -96,7 +108,7 @@
         },
         {
             "type": "InitialLoss",
-            "weight": 0.3, 
+            "weight": 0.2, 
             "channel_weights": [1.0, 0.5, 0.5],
             "args": {
                 "percentage": 0.04,
@@ -106,7 +118,7 @@
         },
         {
             "type": "TerminalLoss",
-            "weight": 0.05,
+            "weight": 0.02,
             "channel_weights": [0.1, 0.5, 0.5],
             "args": {
                 "percentage": 0.04,
@@ -127,17 +139,17 @@
     "lr_scheduler": {
         "type": "CosineAnnealingLR",
         "args": {
-            "T_max": 110,
+            "T_max": 120,
             "eta_min": 0
         }
     },
     "trainer": {
-        "epochs": 110,
+        "epochs": 120,
         "save_dir": "saved/",
         "save_period": 10,
         "verbosity": 2,
         "monitor": "max val_iso_rating_x",
-        "early_stop": 20,
+        "early_stop": 30,
         "tensorboard": true
     }
 }

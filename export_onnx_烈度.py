@@ -46,7 +46,7 @@ def create_sample_raw_input(raw_input_dict=None):
 
     return np.array([impact_velocity, impact_angle, overlap], dtype=np.float32)
 
-def preprocess_input(raw_params):
+def preprocess_input(raw_params, scaler):
     """
     使用与训练时相同的InputScaler对原始输入数据进行预处理,使其符合模型输入要求。
 
@@ -60,7 +60,8 @@ def preprocess_input(raw_params):
             - 数据形状: (1, 3)
             - 数据格式: [[norm_velocity, norm_angle, norm_overlap]]
     """
-    scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1)
+    if scaler is None:
+        raise ValueError("preprocess_input 函数必须提供有效的 InputScaler 实例。")
     velocity, angle, overlap = raw_params
     norm_velocity, norm_angle, norm_overlap = scaler.transform(velocity, angle, overlap)
     processed_params = np.array([norm_velocity, norm_angle, norm_overlap], dtype=np.float32)
@@ -88,8 +89,11 @@ def export_model(model, sample_input, output_path, opset_version=11):
     # - 名称 (Name): 'out_mean0', 'out_mean1', 'out_mean2', 'out_var0', 'out_var1', 'out_var2'
     # - 数据类型 (Data Type): float32
     # - 形状 (Shape): 分别为 [batch_size, 3, 37], [batch_size, 3, 75], [batch_size, 3, 150] ...
-    output_names = ["out_mean0", "out_mean1", "out_mean2", "out_var0", "out_var1", "out_var2"]
-    
+    output_names = [
+    "out_mean_s1", "out_var_s1",
+    "out_mean_s2", "out_var_s2",
+    "out_mean_s3", "out_var_s3"
+    ]
     dynamic_axes = {"input": {0: "batch_size"}}
     for name in output_names:
         dynamic_axes[name] = {0: "batch_size"}
@@ -238,13 +242,22 @@ if __name__ == "__main__":
             print("  ⚠ 警告: 配置中未指定 'scaler_path',无法进行逆归一化。")
 
     print("\n创建并预处理样本输入...")
+
+    dl_args = config['data_loader_train']['args']
+    if 'physics_bounds' in dl_args:
+        bounds = dl_args['physics_bounds']
+    else:
+        raise ValueError("config文件中缺少 'physics_bounds' 参数，请更新配置文件。")
+
+    input_scaler = InputScaler(**bounds)
+
     raw_inputs = {
         'impact_velocity': 43.97580257,  # kph
         'impact_angle': 1.257534638,     # degrees
         'overlap': 0.468948606            #  overlap
     }
     raw_params = create_sample_raw_input(raw_inputs)
-    sample_input = preprocess_input(raw_params).to(device)
+    sample_input = preprocess_input(raw_params, input_scaler).to(device)
 
     print("\n" + "="*50)
     print("加载PyTorch模型")

@@ -53,7 +53,7 @@ class SeedFeatureProjector(nn.Module):
         z_dim: 输入全局特征维度
         output_len: 输出时序长度
         output_channels: 输出通道数
-        pos_dim: 位置编码维度; 最好大于output_len,以满足DFT基的完备性
+        pos_dim: 位置编码维度;偶数, 最好大于output_len,以满足DFT基的完备性
         proj_channels: 投影隐藏层维度
         dropout: Dropout 概率
     """
@@ -92,7 +92,7 @@ class SeedFeatureProjector(nn.Module):
         """生成正弦位置编码"""
         pe = torch.zeros(length, d_model)
         position = torch.arange(0, length, dtype=torch.float).unsqueeze(1)
-        Base = 500.0 # PE 的最低频率必须低于或等于信号的基频，1/Base <= 2*Pi / length 
+        Base = 500.0 # PE 的最低频率必须低于或等于信号的基频，1/Base <= 2*Pi / length -> Base >= length / (2*Pi)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(Base) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)

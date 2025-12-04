@@ -13,7 +13,6 @@ from parse_config import ConfigParser
 from model.metric import ISORating # 导入 ISORating 类用于计算
 from utils import inverse_transform, plot_waveform_comparison, InputScaler
 from pathlib import Path
-import os
 import pandas as pd
 import numpy as np
 
@@ -77,10 +76,6 @@ def main(config):
     logger.info(model)
 
     # get function handles of loss and metrics
-    # loss_fn = getattr(module_loss, config['loss'])
-    # loss_fn = config.init_obj('loss', module_loss) # <-- 旧的初始化方式
-    
-    # +++ 新的初始化方式 +++
     loss_fns = []
     if 'loss' in config.config and isinstance(config['loss'], list):
         for loss_spec in config['loss']:
@@ -138,7 +133,14 @@ def main(config):
             # ---------------------------------------       
 
             # 收集逆变换后的工况、预测和目标
-            input_scaler = getattr(data_loader.dataset, 'input_scaler', InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1))
+            # 从 data_loader.dataset 中获取 scaler (优先)，或者从 config 中读取参数重新构建
+            if hasattr(data_loader.dataset, 'input_scaler'):
+                input_scaler = data_loader.dataset.input_scaler
+            else:
+                # 兜底逻辑：从 config 获取参数
+                bounds = config['data_loader_test']['args'].get('physics_bounds')
+                input_scaler = InputScaler(**bounds)
+                
             for i in range(data.shape[0]):
                 norm_vel, norm_ang, norm_ov = data[i].cpu().numpy()
                 raw_vel, raw_ang, raw_ov = input_scaler.inverse_transform(norm_vel, norm_ang, norm_ov)

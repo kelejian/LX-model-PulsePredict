@@ -13,12 +13,12 @@ from utils import InputScaler, PulseAbsMaxScaler
 class CollisionDataset(Dataset):
     """
     用于加载已打包的碰撞数据的自定义数据集。
-    【版本说明】: 此版本直接读取由新的 data_prepare 脚本打包后的单个 .npz 文件。
     """
-    def __init__(self, packaged_data_path, target_scaler=None):
+    def __init__(self, packaged_data_path, target_scaler=None, physics_bounds=None):
         """
         :param packaged_data_path: 包含已打包的 case_id, params, waveforms 的 .npz 文件路径。
         :param target_scaler: 可选的目标缩放器，用于对波形进行缩放。
+        :param physics_bounds: 用于初始化 InputScaler 的物理参数边界字典
         """
         self.target_scaler = target_scaler
 
@@ -29,8 +29,10 @@ class CollisionDataset(Dataset):
         raw_waveforms = data['waveforms']   # 原始物理尺度的波形
 
         # --- 2. 归一化输入参数 ---
-        # 注意：这里的 InputScaler 实例作为属性保存，以便在 test.py 中可以调用它进行逆变换
-        self.input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1)
+        if physics_bounds is None:
+             raise ValueError("CollisionDataset 必须提供 physics_bounds 参数。")
+             
+        self.input_scaler = InputScaler(**physics_bounds) # 使用传入的参数初始化
         norm_velocities, norm_angles, norm_overlaps = self.input_scaler.transform(
             raw_params[:, 0], raw_params[:, 1], raw_params[:, 2]
         )
@@ -72,9 +74,8 @@ class CollisionDataset(Dataset):
 class CollisionDataLoader(BaseDataLoader):
     """
     用于加载碰撞波形数据的 DataLoader 类。
-    【版本说明】: 此版本适配单一数据源文件，简化了初始化和Scaler处理逻辑。
     """
-    def __init__(self, packaged_data_path, batch_size, pulse_norm_mode='none', scaler_path=None, shuffle=True, validation_split=0.1, num_workers=0, training=True):
+    def __init__(self, packaged_data_path, batch_size, pulse_norm_mode='none', scaler_path=None, shuffle=True, validation_split=0.1, num_workers=0, training=True, physics_bounds=None):
         """
         :param packaged_data_path: 包含打包数据的 .npz 文件路径。
         :param batch_size: 批量大小。
@@ -84,10 +85,11 @@ class CollisionDataLoader(BaseDataLoader):
         :param validation_split: 验证集比例。在非训练模式下会被强制设为 0。
         :param num_workers: 数据加载的工作线程数。
         :param training: 是否为训练模式。这会影响Scaler的加载/保存行为。
+        :param physics_bounds: 用于初始化 InputScaler 的物理参数边界字典, 从config.json传入
         """
         if not os.path.exists(packaged_data_path):
             raise FileNotFoundError(f"打包好的数据文件未找到: {packaged_data_path}。")
-
+        
         target_scaler = None
         # --- Scaler 处理 ---
         if pulse_norm_mode != 'none':
@@ -136,7 +138,7 @@ class CollisionDataLoader(BaseDataLoader):
             validation_split = 0.0
 
         # --- 实例化Dataset ---
-        self.dataset = CollisionDataset(packaged_data_path, target_scaler)
+        self.dataset = CollisionDataset(packaged_data_path, target_scaler, physics_bounds=physics_bounds)
         
         # 保存一些有用的属性
         self.pulse_norm_mode = pulse_norm_mode

@@ -15,7 +15,6 @@ import pandas as pd
 # 导入项目模块
 import model.model as module_arch
 from model.metric import ISORating
-from utils.util import InputScaler, inverse_transform
 from parse_config import ConfigParser # 仅用于日志记录器
 from utils.util import InputScaler, inverse_transform, plot_waveform_comparison
 
@@ -360,9 +359,12 @@ def main():
     logger.info(f"模型 '{model_arch_type}' 加载成功并设置到 {device}。")
 
     # --- 3. 加载 Scalers ---
-    input_scaler = InputScaler(v_min=23.5, v_max=65, a_abs_max=45, o_abs_max=1)
+    bounds = config['data_loader_train']['args'].get('physics_bounds')
+    if not bounds:
+         raise ValueError("配置文件中未找到 'physics_bounds'")
+    input_scaler = InputScaler(**bounds)
+
     target_scaler = None
-    
     try:
         scaler_path_str = config['data_loader_train']['args'].get('scaler_path')
         if scaler_path_str:

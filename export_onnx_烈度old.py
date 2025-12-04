@@ -46,8 +46,12 @@ if __name__ == "__main__":
         input_feature,        # 示例输入
         onnx_path,            # ONNX 文件的路径
         input_names=["input"],     # 输入名
-        output_names=["out_mean0", "out_mean1", "out_mean2", # out_mean2是最终输出的完整波形；前俩是粗糙短预测不用管。
-                      "out_var0", "out_var1", "out_var2"],  # 输出名；三个方差不用管
+        output_names = [
+        "out_mean_s1", "out_var_s1",
+        "out_mean_s2", "out_var_s2",
+        "out_mean_s3", "out_var_s3"
+        ],
+         # out_mean2是最终输出的完整波形；前俩是粗糙短预测不用管。三个方差不用管
         do_constant_folding=True,
         opset_version=17,     # ONNX opset 版本
     )
