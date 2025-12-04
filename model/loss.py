@@ -4,8 +4,154 @@ import torch.nn.functional as F
 import torch.nn as nn
 import model.loss as module_loss # 导入自身模块以便动态创建base_loss
 
-def nll_loss(output, target):
-    return F.nll_loss(output, target)
+# =========================================================================
+# 自动加权loss总管类 (Auto-Weighting Wrapper)
+# =========================================================================
+class AutoWeightedLoss(nn.Module):
+    """
+    基于同方差不确定性(Homoscedastic Uncertainty)的多任务自动加权封装器。
+    
+    原理: 
+        L_total = Σ [λ_i * (0.5 * exp(-s_i) * L_i + 0.5 * s_i)]
+        其中 s_i = log(σ_i^2) 是可学习参数，λ_i 是人为设定的先验权重。
+        该机制能自动平衡不同Loss的数值尺度，同时保留人为设定的任务优先级。
+    """
+    def __init__(self, loss_configs):
+        """
+        :param loss_configs: 包含子Loss配置的列表。格式示例:
+               [
+                   {"type": "MultiScaleLoss", "prior_weight": 1.0, "args": {...}},
+                   {"type": "VelocityLoss", "prior_weight": 0.5, "args": {...}}
+               ]
+        """
+        super().__init__()
+        self.losses = nn.ModuleList()  # 存储实例化后的子Loss模块
+        self.prior_weights = []        # 存储人为设定的λ_i
+        self.loss_keys = []            # 存储Loss名称用于日志记录
+
+        # --- 动态构建子Loss ---
+        for config in loss_configs:
+            loss_type = config['type']
+            prior_w = config.get('prior_weight', 1.0) # 默认为1.0
+            loss_args = config.get('args', {})
+
+            # 反射实例化: model.loss.LossClass(**args)
+            loss_cls = getattr(module_loss, loss_type)
+            self.losses.append(loss_cls(**loss_args))
+            
+            self.prior_weights.append(prior_w)
+            self.loss_keys.append(loss_type)
+
+        # --- 初始化可学习参数 s_i ---
+        # 初始化为0 (即σ=1)，保证训练初期的梯度稳定性
+        self.log_vars = nn.Parameter(torch.zeros(len(self.losses)))
+        
+        # 将静态权重注册为buffer (不参与梯度更新，但随模型保存)
+        self.register_buffer('priors', torch.tensor(self.prior_weights))
+
+    def forward(self, model_output, target):
+        """
+        :param model_output: 模型输出 (通常是多尺度列表 [s1, s2, s3])
+        :param target: 真实标签 (B, C, L)
+        :return: (加权总Loss, 各分量Loss字典)
+        """
+        total_loss = 0
+        loss_components = {}
+
+        for i, loss_fn in enumerate(self.losses):
+            # 1. 计算原始物理Loss (L_i)
+            # 注: 各子Loss内部需自行处理 model_output 格式(如取列表最后一个元素)
+            raw_loss = loss_fn(model_output, target)
+            
+            # 2. 获取参数
+            s_i = self.log_vars[i]     # 可学习的不确定性参数
+            lambda_i = self.priors[i]  # 固定的人为先验权重
+
+            # 3. 应用自动加权公式 (外乘权重方案)
+            # precision = 1/σ^2 = exp(-s)
+            precision = torch.exp(-s_i)
+            weighted_loss = lambda_i * (0.5 * precision * raw_loss + 0.5 * s_i)
+            
+            total_loss += weighted_loss
+            
+            # 4. 记录日志 (记录原始物理Loss值，方便观察实际性能)
+            key = self.loss_keys[i]
+            loss_components[key] = raw_loss.item() 
+
+        return total_loss, loss_components
+
+# =========================================================================
+# 多尺度回归骨干 (Multi-Scale Backbone Loss)
+# =========================================================================
+class MultiScaleLoss(nn.Module):
+    """
+    多尺度加权回归损失。
+    支持配置基础损失函数(如L1, MSE)，并支持通道加权。
+    """
+    def __init__(self, scale_weights=[0.1, 0.2, 1.0], base_loss='L1Loss', channel_weights=[1.0, 1.0, 1.0], **kwargs):
+        """
+        :param scale_weights: 各尺度(s1, s2, s3)的权重列表
+        :param base_loss: 基础损失函数类名 (L1Loss, MSELoss, GaussianNLLLoss等)
+        :param channel_weights: 各物理通道(x, y, z)的权重
+        :param kwargs: 透传给base_loss的参数
+        """
+        super().__init__()
+        self.scale_weights = scale_weights
+        self.channel_weights = torch.tensor(channel_weights)
+        
+        # 动态实例化基础Loss (如 nn.L1Loss)
+        # 强制 reduction='none' 以便后续手动应用通道加权
+        if base_loss == 'GaussianNLLLoss':
+             self.base_criterion = nn.GaussianNLLLoss(reduction='none', **kwargs)
+        else:
+             loss_cls = getattr(nn, base_loss)
+             self.base_criterion = loss_cls(reduction='none', **kwargs)
+
+    def forward(self, preds_list, target):
+        """
+        :param preds_list: 多尺度预测列表 [s1, s2, s3]
+        :param target: 真实标签 (B, C, L)
+        """
+        # 兼容性处理: 如果模型只返回单尺度，转为列表
+        if not isinstance(preds_list, (list, tuple)):
+            preds_list = [preds_list]
+
+        total_loss = 0
+        device = target.device
+        # 调整通道权重形状以支持广播: (C,) -> (1, C, 1)
+        c_w = self.channel_weights.to(device).view(1, -1, 1)
+
+        # 遍历每个尺度进行计算
+        for i, pred in enumerate(preds_list):
+            # 超出配置层数或权重为0则跳过
+            if i >= len(self.scale_weights) or self.scale_weights[i] == 0:
+                continue
+                
+            # --- 1. 对齐目标 (Interpolate Target) ---
+            # 如果当前尺度预测长度与目标不一致，则缩放目标
+            curr_len = pred.shape[-1]
+            if curr_len != target.shape[-1]:
+                target_resized = F.interpolate(target, size=curr_len, mode='linear', align_corners=False)
+            else:
+                target_resized = target
+
+            # --- 2. 计算基础Loss ---
+            # 区分处理 GaussianNLL (输入为 mean, var) 和 普通回归 (输入为 pred)
+            if isinstance(self.base_criterion, nn.GaussianNLLLoss):
+                # 假设 GauNLL 模式下 pred 是 (mean, var) 元组
+                # 注意：这需要模型输出配合，若模型未开启GauNLL，此分支不应被执行
+                mean, var = pred
+                loss = self.base_criterion(mean, target_resized, var)
+            else:
+                loss = self.base_criterion(pred, target_resized)
+
+            # --- 3. 应用通道加权并聚合 ---
+            # loss: (B, C, L) * c_w: (1, C, 1) -> Mean
+            weighted_loss = (loss * c_w).mean()
+            
+            total_loss += self.scale_weights[i] * weighted_loss
+
+        return total_loss
 
 class GaussianNLLLoss(nn.Module):
     """
@@ -43,7 +189,10 @@ class MSEloss(nn.Module):
     """
     def __init__(self, **kwargs):
         super().__init__()
-        self.mse_loss = nn.MSELoss(**kwargs)
+        # 过滤掉 MSELoss 不支持的参数
+        valid_kwargs = {k: v for k, v in kwargs.items() 
+                       if k in ['reduction', 'size_average', 'reduce']}
+        self.mse_loss = nn.MSELoss(**valid_kwargs)
 
     def forward(self, pred, target):
         return self.mse_loss(pred, target)
@@ -58,49 +207,6 @@ class MAEloss(nn.Module):
 
     def forward(self, pred, target):
         return self.mae_loss(pred, target)
-
-class MultiLoss(nn.Module):
-    """
-    一个通用的多路损失加权求和模块。
-    """
-    def __init__(self, scale_loss_weights, base_loss_type, base_loss_args=None):
-        """
-        :param scale_loss_weights: 一个列表，包含每一路损失的权重。
-        :param base_loss_type: 基础损失函数的类型名称 (字符串)，例如 'GaussianNLLLoss'。
-        :param base_loss_args: 一个字典，包含基础损失函数的初始化参数。
-        """
-        super().__init__()
-        if base_loss_args is None:
-            base_loss_args = {}
-        self.scale_loss_weights = scale_loss_weights
-        # 使用getattr动态地从本模块(module_loss)中获取损失函数类并实例化
-        self.base_loss = getattr(module_loss, base_loss_type)(**base_loss_args)
-        
-    def forward(self, pred_list, target_list):
-        """
-        计算加权总损失。
-
-        :param pred_list: 预测值列表。
-                          - 对于普通loss，每个元素是 pred_tensor。
-                          - 对于GauNLL, 每个元素是 (pred_mean_tensor, pred_var_tensor) 的元组。
-        :param target_list: 目标值列表，应与 pred_list 中的张量形状一一对应。
-        :return: 加权后的总损失标量。
-        """
-        if len(self.scale_loss_weights) != len(pred_list):
-            raise ValueError(f"scale_loss_weights (len={len(self.scale_loss_weights)}) 和 pred_list (len={len(pred_list)}) 的长度必须一致。")
-        
-        total_loss = 0
-        for i, (pred, target) in enumerate(zip(pred_list, target_list)):
-            if isinstance(pred, tuple):
-                # 适用于需要多个输入的loss，如 GaussianNLLLoss(mean, target, var)
-                loss = self.base_loss(*pred, target)
-            else:
-                # 适用于标准loss，如 MSELoss(pred, target)
-                loss = self.base_loss(pred, target)
-            
-            total_loss += self.scale_loss_weights[i] * loss
-            
-        return total_loss / sum(self.scale_loss_weights)
 
 class InitialLoss(nn.Module):
     """
@@ -238,14 +344,48 @@ class TerminalLoss(nn.Module):
             return loss.sum()
         else:
             raise ValueError(f"不支持的 reduction 类型: {self.reduction}")
+
+class VelocityLoss(nn.Module):
+    """
+    速度一致性损失函数（约束一重积分）。
+    通过计算预测加速度与真实加速度的累积和（速度变化量）之间的差异，
+    强制模型遵循动量守恒等物理规律，减少低频漂移。
+    """
+    def __init__(self, dt=0.001, loss_type='mse', reduction='mean'):
+        """
+        :param dt: 采样时间间隔，默认为 0.001s (1ms)。
+        :param loss_type: 'l1' (MAE) 或 'mse' (L2)
+        :param reduction: 'mean' 或 'sum'。
+        """
+        super().__init__()
+        self.dt = dt
+        self.reduction = reduction
+        if loss_type == 'l1':
+            self.criterion = nn.L1Loss(reduction=reduction)
+        elif loss_type == 'mse':
+            self.criterion = nn.MSELoss(reduction=reduction)
+        else:
+            raise ValueError(f"不支持的 loss_type: {loss_type}")
+
+    def forward(self, pred, target):
+        """
+        :param pred: 预测加速度 (B, C, L)
+        :param target: 真实加速度 (B, C, L)
+        注意：即便输入是归一化后的加速度，对其积分的一致性约束依然有效。
+        """
+        # 计算速度变化量 (Delta V)
+        # dim=-1 表示沿时间轴积分
+        pred_vel = torch.cumsum(pred, dim=-1) * self.dt
+        target_vel = torch.cumsum(target, dim=-1) * self.dt
         
+        return self.criterion(pred_vel, target_vel)
+
 # 基于ISO-Rating的Loss设计
 class CorridorLoss(nn.Module):
     """
-    一个可微分的代理损失函数，用于模拟 ISO 标准中的廊道评分。
-
-    该损失函数惩罚那些超出以内廊道为边界的预测值。
-    损失的大小与超出部分的量和指数因子相关，这与 ISO 标准的精神一致。
+    一个可微分的代理损失函数，用于模拟 ISO 标准中的廊道评分
+    该损失函数惩罚那些超出以内廊道为边界的预测值
+    损失的大小与超出部分的量和指数因子相关
     """
     def __init__(self, inner_corridor_width=0.05, exponent=2.0, reduction='mean'):
         """

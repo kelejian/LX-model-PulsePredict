@@ -98,7 +98,7 @@
         },
         {
             "type": "PhaseLoss",
-            "weight": 2.0,
+            "weight": 1.0,
             "channel_weights": [1.0, 0.5, 0.05],
             "args": {
                 "n_fft": 64,
@@ -124,6 +124,15 @@
                 "percentage": 0.04,
                 "weight_target": 2.0,
                 "loss_type": "mae"
+            }
+        },
+        {
+            "type": "VelocityLoss",
+            "weight": 1e4, 
+            "channel_weights": [1.0, 0.4, 0.1], 
+            "args": {
+                "dt": 0.001,
+                "loss_type": "mse"
             }
         }
     ],
