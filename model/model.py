@@ -627,15 +627,19 @@ class HybridPulseCNN(BaseModel):
     def forward(self, x):
         """
         前向传播
-        
+
         输入: (B, input_dim)
-        输出: [(s1_mean, s1_var), (s2_mean, s2_var), (s3_mean, s3_var)]
-              或 [s1_mean, s2_mean, s3_mean] (若 GauNll_use=False)
-        
-        其中:
-            s1: (B, output_channels, output_lengths[0])
-            s2: (B, output_channels, output_lengths[1])
-            s3: (B, output_channels, output_lengths[2])
+        输出: 
+            - 若 GauNll_use=True: [(s1_mean, s1_var), (s2_mean, s2_var), (s3_mean, s3_var)]
+            其中每个 tuple 的 mean 和 var 形状均为 (B, output_channels, output_lengths[i])
+            
+            - 若 GauNll_use=False: [s1_pred, s2_pred, s3_pred]
+            其中每个 pred 是张量，形状为 (B, output_channels, output_lengths[i])
+
+        Stage 输出长度:
+            s1: output_lengths[0]
+            s2: output_lengths[1]
+            s3: output_lengths[2]
         """
         B = x.size(0)
         
@@ -739,8 +743,8 @@ class HybridPulseCNN(BaseModel):
         
         输入: (B, output_channels*k, L)，k=1（仅均值）或 k=2（均值+方差）
         输出: 
-            - GauNll_use=True: (mean, var)，每个形状为 (B, output_channels, L)
-            - GauNll_use=False: raw_out，形状为 (B, output_channels, L)
+            - GauNll_use=True: (mean, var)，元组，每个形状为 (B, output_channels, L)
+            - GauNll_use=False: raw_out，张量，形状为 (B, output_channels, L)
         """
         if self.GauNll_use:
             # 通道布局: [Mx, Vx, My, Vy, Mz, Vz] -> 重塑为 [x:(M,V), y:(M,V), z:(M,V)]

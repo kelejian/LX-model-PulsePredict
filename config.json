@@ -57,10 +57,10 @@
     "optimizer": {
         "type": "AdamW",
         "args": {
-            "lr": 1.2e-3,
+            "lr": 1.1e-3,
             "weight_decay": 5e-3
         },
-        "head_decay_ratio": 0.05
+        "head_decay_ratio": 0.02
     },
 
     "loss": {
@@ -92,7 +92,7 @@
                     "args": {
                         "apply_smoothing": false,
                         "smoothing_window_size": 5,
-                        "channel_weights": [1.0, 0.5, 0.02]
+                        "channel_weights": [1.0, 0.5, 0.05]
                     }
                 },
                 {
@@ -102,15 +102,16 @@
                         "n_fft": 64,
                         "hop_length": 16,
                         "win_length": 64,
-                        "channel_weights": [1.0, 0.5, 0.05]
+                        "channel_weights": [1.0, 0.5, 0.2]
                     }
                 },
                 {
                     "type": "InitialLoss",
-                    "prior_weight": 0.1,
+                    "prior_weight": 0.05,
                     "args": {
                         "percentage": 0.04,
                         "weight_target": 0.5,
+                        "loss_type": "mae",
                         "channel_weights": [1.0, 0.5, 0.5]
                     }
                 },
@@ -120,7 +121,8 @@
                     "args": {
                         "percentage": 0.04,
                         "weight_target": 2.0,
-                        "channel_weights": [0.1, 0.5, 0.5]
+                        "loss_type": "mae",
+                        "channel_weights": [0.1, 0.4, 0.5]
                     }
                 },
                 {
@@ -134,11 +136,11 @@
                 },
                 {
                     "type": "DeltaVLoss",
-                    "prior_weight": 0.2,
+                    "prior_weight": 0.25,
                     "args": {
                         "dt": 0.001,
                         "loss_type": "MSELoss",
-                        "channel_weights": [1.0, 0.4, 0.1]
+                        "channel_weights": [1.0, 0.5, 0.2]
                     }
                 }
             ]
@@ -164,7 +166,7 @@
         "epochs": 150,
         "save_dir": "saved/",
         "save_period": 20,
-        "verbosity": 1,
+        "verbosity": 2,
         "monitor": "max val_iso_rating_x",
         "early_stop": 30,
         "tensorboard": true

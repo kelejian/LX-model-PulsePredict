@@ -14,6 +14,7 @@ class AutoWeightedLoss(nn.Module):
     1. 解析配置列表，实例化所有子 Loss。
     2. 管理可学习的权重参数 (Homoscedastic Uncertainty)，实现多任务自动平衡。
     3. 结合人工先验权重 (Prior Weight) 计算最终总损失。
+    4. 监控：向 TensorBoard 报告原始的、具有物理意义的 Loss 值 (未被 s_i 缩放)。
     """
     def __init__(self, loss_configs):
         """
@@ -28,7 +29,7 @@ class AutoWeightedLoss(nn.Module):
         self.prior_weights = []  # 人工先验权重 (lambda_i)
         self.loss_names = []
 
-        for config in loss_configs:
+        for config in loss_configs: # 逐个解析各项子 Loss 配置
             loss_type = config['type']
             prior_w = config.get('prior_weight', 1.0)
             loss_args = config.get('args', {})
@@ -36,9 +37,9 @@ class AutoWeightedLoss(nn.Module):
             # 动态实例化 Loss 类 (从当前模块 globals 中查找类)
             if loss_type not in globals():
                 raise ValueError(f"未知的 Loss 类型: {loss_type}")
-            loss_cls = globals()[loss_type]
+            loss_cls = globals()[loss_type] # 类引用
             
-            self.losses.append(loss_cls(**loss_args))
+            self.losses.append(loss_cls(**loss_args)) # 实例化并添加到 ModuleList
             self.prior_weights.append(prior_w)
             self.loss_names.append(loss_type)
 
@@ -51,19 +52,21 @@ class AutoWeightedLoss(nn.Module):
 
     def forward(self, model_output, target):
         """
-        :param model_output: 模型输出 (可能是列表、元组或张量)
-        :param target: 真实标签 (B, C, L)
+        :param:
+            model_output: 模型输出 (可能是列表、元组或张量)
+            target: 真实标签 (B, C, L)
+        :return: 
+            total_loss: 用于反向传播的加权总损失
+            loss_components: 用于监控的原始损失值字典 (对应旧版 tensorboard 曲线)
         """
         total_loss = 0
         loss_components = {}
 
         for i, loss_fn in enumerate(self.losses):
-            # 1. 计算子 Loss 
-            # (各子 Loss 继承自 BaseSingleScaleLoss 或为 MultiScaleLoss，内部已处理输入解析和通道加权)
-            # 返回值是一个标量 (Batch Mean)
+            # 1. 计算子 Loss (返回的是物理尺度的标量，即加权平均后的 Loss)
             raw_loss = loss_fn(model_output, target)
             
-            # 2. 自动加权逻辑: L_final = lambda * (0.5 * exp(-s) * L_raw + 0.5 * s)
+            # 2. 自动加权逻辑 (Kendall et al.): L_final = lambda * (0.5 * exp(-s) * L_raw + 0.5 * s)
             s_i = self.log_vars[i]
             precision = torch.exp(-s_i)
             
@@ -72,7 +75,7 @@ class AutoWeightedLoss(nn.Module):
             
             total_loss += weighted_loss
             
-            # 3. 记录原始 loss 值用于 TensorBoard 监控 (不含权重)
+            # 3. 记录原始 loss 值 (Raw Physical Loss)用于 TensorBoard 监控
             loss_components[self.loss_names[i]] = raw_loss.item()
 
         return total_loss, loss_components
@@ -96,24 +99,16 @@ class BaseSingleScaleLoss(nn.Module):
     """
     def __init__(self, channel_weights=[1.0, 1.0, 1.0]):
         super().__init__()
-        # 注册 channel_weights 为 buffer，自动处理 device 转移
-        # 形状转换为 (1, C, 1) 以便支持广播: (Batch, Channel, Time)
-        self.register_buffer('channel_weights', torch.tensor(channel_weights, dtype=torch.float32).view(1, -1, 1))
+        # 转换为 (C,) 的 1D Tensor，方便后续计算
+        self.register_buffer('channel_weights', torch.tensor(channel_weights, dtype=torch.float32))
 
     def _get_prediction(self, model_output):
-        """
-        解析模型输出，提取用于物理评估的 Tensor (通常是均值)。
-        """
+        """解析模型输出，提取最后阶段的均值预测"""
         pred = model_output
-        
-        # 1. 处理多尺度列表 -> 取最后一个尺度 (最高分辨率)
         if isinstance(pred, (list, tuple)):
-            pred = pred[-1]
-            
-        # 2. 处理高斯输出元组 (mean, var) -> 物理 Loss 只关心 mean
+            pred = pred[-1] # 取最后一个尺度
         if isinstance(pred, (list, tuple)):
-            pred = pred[0]
-            
+            pred = pred[0]  # 取均值 (如果是 GauNLL 输出)
         return pred
 
     def forward_step(self, pred, target):
@@ -125,7 +120,7 @@ class BaseSingleScaleLoss(nn.Module):
         raise NotImplementedError
 
     def forward(self, model_output, target):
-        # 1. 解析输入，获取 (B, C, L) 的预测值
+        # 1. 解析与对齐
         pred = self._get_prediction(model_output)
         
         # 2. 形状对齐 (防守性编程)
@@ -133,18 +128,27 @@ class BaseSingleScaleLoss(nn.Module):
         if pred.shape[-1] != target.shape[-1]:
             target = F.interpolate(target, size=pred.shape[-1], mode='linear', align_corners=False)
             
-        # 3. 计算原始损失 (由子类实现，reduction='none')
+        # 2. 计算原始损失,reduction='none' (B, C, L) 或 (B, C)
         raw_loss = self.forward_step(pred, target)
         
-        # 4. 应用通道加权
-        # 根据 raw_loss 维度自动适配权重形状
-        if raw_loss.ndim == 2: # (B, C) -> 扩展为 (B, C, 1) 匹配权重 (1, C, 1)
-            loss_weighted = raw_loss.unsqueeze(-1) * self.channel_weights
-        else: # (B, C, L) -> 直接乘权重 (1, C, 1)
-            loss_weighted = raw_loss * self.channel_weights
+        # 3. 通道加权平均逻辑
+
+        # 步骤 A: 对 Batch 和 Time 维度求均值，保留 Channel 维度 -> (C,)
+        dims_to_reduce = [0] + list(range(2, raw_loss.ndim)) # e.g.(B, C, L) -> reduce over B and L, remain C
+        loss_per_channel = raw_loss.mean(dim=dims_to_reduce) # (C,)
         
-        # 5. 聚合 (Mean)
-        return loss_weighted.mean()
+        # 步骤 B: 确保权重设备一致
+        weights = self.channel_weights.to(loss_per_channel.device)
+        
+        # 步骤 C: 通道加权平均 (Weighted Average)
+        # Formula: Sum(Loss_c * w_c) / Sum(w_c)
+        weighted_sum = (loss_per_channel * weights).sum()
+        weight_sum = weights.sum()
+        
+        if weight_sum > 0:
+            return weighted_sum / weight_sum
+        else:
+            return torch.tensor(0.0, device=raw_loss.device)
 
 
 # ==========================================================================================
@@ -164,8 +168,7 @@ class MultiScaleLoss(nn.Module):
                  base_loss_type='L1Loss', base_loss_args=None):
         super().__init__()
         self.scale_weights = scale_weights
-        # 通道权重 (1, C, 1)
-        self.register_buffer('channel_weights', torch.tensor(channel_weights, dtype=torch.float32).view(1, -1, 1))
+        self.register_buffer('channel_weights', torch.tensor(channel_weights, dtype=torch.float32))
         
         # 实例化基础损失函数 (强制 reduction='none' 以便手动加权)
         base_loss_args = base_loss_args or {}
@@ -185,7 +188,8 @@ class MultiScaleLoss(nn.Module):
         else:
             preds_list = model_output
 
-        total_loss = 0
+        total_loss_sum = 0.0
+        total_scale_weight_sum = 0.0
         
         # 遍历每个尺度
         for i, pred_item in enumerate(preds_list):
@@ -193,15 +197,17 @@ class MultiScaleLoss(nn.Module):
             if i >= len(self.scale_weights) or self.scale_weights[i] == 0:
                 continue
 
+            current_scale_w = self.scale_weights[i]
+
             # 1. 解析当前尺度的预测
             if self.is_gauss:
-                # 期望格式: (mean, var)
+                # 期望格式tuple (mean, var)
                 if not isinstance(pred_item, (list, tuple)):
                     # 如果模型没开启 GauNll 但 Loss 配置了 GauNll，这里会报错，属于配置错误
                     raise ValueError(f"MultiScaleLoss 配置为 GaussianNLLLoss，但模型输出尺度 {i} 不是 (mean, var) 元组。")
                 pred, var = pred_item
             else:
-                # 期望格式: mean or (mean, var) 但只取 mean
+                # 期望格式tensor: mean (or (mean, var) 但只取 mean)
                 pred = pred_item[0] if isinstance(pred_item, (list, tuple)) else pred_item
 
             # 2. 对齐目标 (Interpolate Target) 到当前尺度长度
@@ -210,19 +216,28 @@ class MultiScaleLoss(nn.Module):
             else:
                 curr_target = target
 
-            # 3. 计算基础 Loss (B, C, L)
+            # 3. 计算基础 Loss , reduction默认为none, 因此输出不为标量
             if self.is_gauss:
-                loss = self.base_criterion(pred, curr_target, var)
+                loss = self.base_criterion(pred, curr_target, var) # nn.GaussianNLLLoss(input, target, var)
             else:
-                loss = self.base_criterion(pred, curr_target)
+                loss = self.base_criterion(pred, curr_target) # e.g., nn.MSELoss(input, target)
 
-            # 4. 应用通道加权并求均值 -> Scalar
-            weighted_loss = (loss * self.channel_weights).mean()
+            # 4. 通道加权平均
+            dims_to_reduce = [0] + list(range(2, loss.ndim)) # e.g.(B, C, L) -> reduce over B and L, remain C
+            loss_per_channel = loss.mean(dim=dims_to_reduce) # (C,)
             
-            # 5. 应用尺度加权累加
-            total_loss += self.scale_weights[i] * weighted_loss
+            weights = self.channel_weights.to(loss.device)
+            channel_weighted_mean = (loss_per_channel * weights).sum() / weights.sum() #  Sum(L_c * w_c) / Sum(w_c); 标量
 
-        return total_loss
+            # 5. 累加尺度损失
+            total_loss_sum += current_scale_w * channel_weighted_mean # 各尺度loss值加权累加
+            total_scale_weight_sum += current_scale_w # 各尺度对应权重累加
+
+        # 6. 尺度加权平均 total_loss / sum(scale_loss_weights)
+        if total_scale_weight_sum > 0:
+            return total_loss_sum / total_scale_weight_sum
+        else:
+            return torch.tensor(0.0, device=target.device)
 
 
 # ==========================================================================================
@@ -241,7 +256,6 @@ class RegressionLoss(BaseSingleScaleLoss):
     def forward_step(self, pred, target):
         return self.criterion(pred, target)
 
-
 class CorridorLoss(BaseSingleScaleLoss):
     """
     [廊道损失] ISO-18571
@@ -253,6 +267,11 @@ class CorridorLoss(BaseSingleScaleLoss):
         self.exponent = exponent
 
     def forward_step(self, pred, target):
+        '''
+        :param pred: 模型的预测输出张量, 形状 (B, C, L)。
+        :param target: 真实的目标张量, 形状 (B, C, L)。
+        :return: 计算得到的廊道损失张量, 形状 (B, C, L), 未经聚合。
+        '''
         # 计算每个样本的幅值基准 t_norm: (B, C, 1)
         t_norm = torch.max(torch.abs(target), dim=-1, keepdim=True)[0]
         delta_i = self.inner_corridor_width * (t_norm + 1e-9)
@@ -263,7 +282,6 @@ class CorridorLoss(BaseSingleScaleLoss):
         
         # 指数惩罚, 返回 (B, C, L)
         return torch.pow(exceeded_error, self.exponent)
-
 
 class SlopeLoss(BaseSingleScaleLoss):
     """
@@ -300,7 +318,6 @@ class SlopeLoss(BaseSingleScaleLoss):
         # 3. 计算 MSE 差异 (B, C, L-1)
         return F.mse_loss(pred_slope, target_slope, reduction='none')
 
-
 class PhaseLoss(BaseSingleScaleLoss):
     """
     [相位损失]
@@ -326,14 +343,13 @@ class PhaseLoss(BaseSingleScaleLoss):
                                window=self.window, return_complex=True, center=True)
 
         # 计算复数距离的平方: |z1 - z2|^2
-        diff_sq = (pred_stft - target_stft).abs().pow(2)
+        diff_sq = (pred_stft - target_stft).abs().pow(2) # (B*C, Freq, Frames)
         
         # 在频域和时间帧上求均值 -> 得到每个通道的 Loss (B*C,)
         loss_flat = diff_sq.mean(dim=(1, 2))
         
         # 还原形状 -> (B, C) 以便基类进行通道加权
         return loss_flat.view(B, C)
-
 
 class VelocityLoss(BaseSingleScaleLoss):
     """
@@ -374,14 +390,22 @@ class InitialLoss(BaseSingleScaleLoss):
     [初始段约束损失]
     核心逻辑：约束波形前 5% 的数据点，使其趋向于 0 或目标值，保证波形平稳启动。
     """
-    def __init__(self, percentage=0.05, weight_target=0.0, **kwargs):
+    def __init__(self, percentage=0.05, weight_target=0.0, loss_type='mae', **kwargs):
         super().__init__(**kwargs)
+
+        if not 0 < percentage <= 1:
+            raise ValueError("`percentage` 必须在 (0, 1] 范围内。")
+        if loss_type not in ['mae', 'mse']:
+            raise ValueError("`loss_type` 必须是 'mae' 或 'mse'。")
+            
         self.percentage = percentage
         self.weight_target = weight_target
+        self.loss_type = loss_type
+        self.criterion = nn.L1Loss(reduction='none') if loss_type == 'mae' else nn.MSELoss(reduction='none')
 
     def forward_step(self, pred, target):
         seq_len = pred.shape[-1]
-        n_points = int(seq_len * self.percentage)
+        n_points = int(seq_len * self.percentage) # 计算初始段点数
         if n_points == 0:
             return torch.zeros_like(pred) # 避免切片为空
 
@@ -389,23 +413,28 @@ class InitialLoss(BaseSingleScaleLoss):
         seg_pred = pred[..., :n_points]
         seg_target = target[..., :n_points]
 
-        # 惩罚绝对值 |pred| (即希望接近0) + 可选的 |target| 偏差
-        loss = torch.abs(seg_pred)
+        # 惩罚初始段与0的差异 (即希望接近0) + 与真值的差异
+        loss = self.criterion(seg_pred, torch.zeros_like(seg_pred))
         if self.weight_target > 0:
-            loss += self.weight_target * torch.abs(seg_target)
+            loss += self.weight_target * self.criterion(seg_pred, seg_target)
             
         return loss # (B, C, n_points)
-
 
 class TerminalLoss(BaseSingleScaleLoss):
     """
     [终端段约束损失]
     核心逻辑：约束波形最后 5% 的数据点，抑制末端飞逸现象。
     """
-    def __init__(self, percentage=0.05, weight_target=1.0, **kwargs):
+    def __init__(self, percentage=0.05, weight_target=1.0, loss_type='mae', **kwargs):
         super().__init__(**kwargs)
         self.percentage = percentage
         self.weight_target = weight_target
+        if not 0 < percentage <= 1:
+            raise ValueError("`percentage` 必须在 (0, 1] 范围内。")
+        if loss_type not in ['mae', 'mse']:
+            raise ValueError("`loss_type` 必须是 'mae' 或 'mse'。")
+        self.loss_type = loss_type
+        self.criterion = nn.L1Loss(reduction='none') if loss_type == 'mae' else nn.MSELoss(reduction='none')
 
     def forward_step(self, pred, target):
         seq_len = pred.shape[-1]
@@ -417,8 +446,10 @@ class TerminalLoss(BaseSingleScaleLoss):
         seg_pred = pred[..., -n_points:]
         seg_target = target[..., -n_points:]
 
-        loss = torch.abs(seg_pred)
+        # 惩罚末尾段与0的差异 + 与真值的差异
+        loss = self.criterion(seg_pred, torch.zeros_like(seg_pred))
         if self.weight_target > 0:
-            loss += self.weight_target * torch.abs(seg_target)
+            loss += self.weight_target * self.criterion(seg_pred, seg_target)
             
         return loss # (B, C, n_points)
+
