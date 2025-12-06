@@ -76,7 +76,7 @@ def main(config):
     logger.info(model)
 
     # get function handles of loss and metrics
-    criterion = config.init_obj('loss', module_loss).to(device)
+    criterion = config.init_obj('loss', module_loss)
 
     metric_fns = [getattr(module_metric, met) for met in config['metrics']]
 
@@ -90,6 +90,7 @@ def main(config):
     # prepare model for testing
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)
+    criterion = criterion.to(device)
     model.eval()
 
     # --- 2. 收集所有测试样本的结果 ---

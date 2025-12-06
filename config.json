@@ -57,10 +57,10 @@
     "optimizer": {
         "type": "AdamW",
         "args": {
-            "lr": 1.1e-3,
+            "lr": 0.0011,
             "weight_decay": 5e-3
         },
-        "head_decay_ratio": 0.02
+        "head_decay_ratio": 0.04
     },
 
     "loss": {
@@ -158,17 +158,17 @@
     "lr_scheduler": {
         "type": "CosineAnnealingLR",
         "args": {
-            "T_max": 150,
+            "T_max": 160,
             "eta_min": 0
         }
     },
     "trainer": {
-        "epochs": 150,
+        "epochs": 160,
         "save_dir": "saved/",
         "save_period": 20,
         "verbosity": 2,
         "monitor": "max val_iso_rating_x",
-        "early_stop": 30,
+        "early_stop": 25,
         "tensorboard": true
     }
 }
