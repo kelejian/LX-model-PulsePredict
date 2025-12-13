@@ -57,10 +57,10 @@
     "optimizer": {
         "type": "AdamW",
         "args": {
-            "lr": 0.0011,
-            "weight_decay": 5e-3
+            "lr": 0.001,
+            "weight_decay": 5e-2
         },
-        "head_decay_ratio": 0.04
+        "head_decay_ratio": 0.01
     },
 
     "loss": {
@@ -69,12 +69,12 @@
             "loss_configs": [
                 {
                     "type": "MultiScaleLoss",
-                    "prior_weight": 0.8,
+                    "prior_weight": 1.0,
                     "args": {
-                        "scale_weights": [0, 1.0, 5.0],
+                        "scale_weights": [0, 0.2, 1.0],
                         "base_loss_type": "GaussianNLLLoss",
                         "base_loss_args": { "eps": 1e-06, "reduction": "none" },
-                        "channel_weights": [1.0, 0.5, 0.02]
+                        "channel_weights": [1.0, 0.5, 0.05]
                     }
                 },
                 {
@@ -92,7 +92,7 @@
                     "args": {
                         "apply_smoothing": false,
                         "smoothing_window_size": 5,
-                        "channel_weights": [1.0, 0.5, 0.05]
+                        "channel_weights": [1.0, 0.5, 0.02]
                     }
                 },
                 {
@@ -102,7 +102,7 @@
                         "n_fft": 64,
                         "hop_length": 16,
                         "win_length": 64,
-                        "channel_weights": [1.0, 0.5, 0.2]
+                        "channel_weights": [1.0, 0.6, 0.2]
                     }
                 },
                 {
@@ -131,7 +131,7 @@
                     "args": {
                         "dt": 0.001,
                         "loss_type": "MSELoss",
-                        "channel_weights": [1.0, 0.5, 0.2]
+                        "channel_weights": [1.0, 0.6, 0.2]
                     }
                 },
                 {
@@ -140,7 +140,7 @@
                     "args": {
                         "dt": 0.001,
                         "loss_type": "MSELoss",
-                        "channel_weights": [1.0, 0.5, 0.2]
+                        "channel_weights": [1.0, 0.6, 0.2]
                     }
                 }
             ]
@@ -158,12 +158,12 @@
     "lr_scheduler": {
         "type": "CosineAnnealingLR",
         "args": {
-            "T_max": 160,
+            "T_max": 150,
             "eta_min": 0
         }
     },
     "trainer": {
-        "epochs": 160,
+        "epochs": 150,
         "save_dir": "saved/",
         "save_period": 20,
         "verbosity": 2,

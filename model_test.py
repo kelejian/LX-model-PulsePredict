@@ -42,13 +42,18 @@ def test_model(
     # 打印模型结构信息
     print("\n============== 模型结构信息 ==============")
     _input_data = tuple(inputs) if isinstance(inputs, (tuple, list)) else inputs
-    summary(
-        model,
-        input_data=_input_data,
-        col_names=["input_size", "output_size", "num_params"],
-        depth=3,
-        device="cuda" if next(model.parameters()).is_cuda else "cpu"
-    )
+    
+    try:
+        summary(
+            model,
+            input_data=_input_data,
+            col_names=["input_size", "output_size", "num_params"],
+            depth=3,
+            device="cuda" if next(model.parameters()).is_cuda else "cpu"
+        )
+    except Exception as e:
+        print(f"⚠ torchinfo.summary 执行失败: {e}")
+        print("继续执行其他测试...")
     
     # 前向传播与loss计算
     print("\n============== 前向传播 ==============")
@@ -65,96 +70,169 @@ def test_model(
     if isinstance(outputs, (tuple, list)) and not isinstance(outputs, torch.Tensor):
         # 一行打印模型各个输出output的形状
         try:
-            print(f"✔ 模型各个输出的形状：{[output.shape if isinstance(output, torch.Tensor) else type(output) for output in outputs]}")
+            output_info = []
+            for output in outputs:
+                if isinstance(output, torch.Tensor):
+                    output_info.append(f"Tensor{tuple(output.shape)}")
+                elif isinstance(output, (tuple, list)):
+                    # 处理嵌套的 tuple/list (如 GaussianNLL 输出)
+                    sub_info = []
+                    for sub_output in output:
+                        if isinstance(sub_output, torch.Tensor):
+                            sub_info.append(f"Tensor{tuple(sub_output.shape)}")
+                        else:
+                            sub_info.append(str(type(sub_output)))
+                    output_info.append(f"({', '.join(sub_info)})")
+                else:
+                    output_info.append(str(type(output)))
+            print(f"✔ 模型输出结构：[{', '.join(output_info)}]")
         except Exception as e:
             print(f"✔ 模型输出类型：{type(outputs)}, 包含 {len(outputs)} 个元素")
             print(f"✔ 各元素类型：{[type(output) for output in outputs]}")
         
+        # 尝试从多尺度输出中找到匹配的输出进行 loss 计算
         loss = None
+        matched_output = None
+        
         for i, output in enumerate(outputs):
-            if isinstance(output, torch.Tensor) and labels.shape == output.shape:
-                loss = criterion(output, labels)
-                print(f"✔ 第{i+1}个模型输出对应了一个loss值: {loss.item()}")
+            # 处理 (mean, var) 元组格式
+            if isinstance(output, (tuple, list)) and len(output) >= 1:
+                current_output = output[0] if isinstance(output[0], torch.Tensor) else output
+            else:
+                current_output = output
+            
+            if isinstance(current_output, torch.Tensor):
+                # 检查形状是否匹配
+                if current_output.shape == labels.shape:
+                    loss = criterion(current_output, labels)
+                    matched_output = current_output
+                    print(f"✔ 使用第 {i+1} 个输出（形状: {tuple(current_output.shape)}）计算损失: {loss.item():.6f}")
+                    break
         
         if loss is None:
-            print("✘ 所有模型输出形状与标签形状都不匹配，使用第一个输出计算损失")
-            first_tensor = outputs[0] if isinstance(outputs[0], torch.Tensor) else outputs[0][0]
-            loss = criterion(first_tensor, labels)
-            print(f"✔ 损失值：{loss.item()}")
+            # 如果没有完全匹配的，尝试使用最后一个输出
+            print("⚠ 所有输出形状与标签不完全匹配，使用最后一个输出...")
+            last_output = outputs[-1]
+            if isinstance(last_output, (tuple, list)):
+                last_output = last_output[0] if isinstance(last_output[0], torch.Tensor) else last_output
+            
+            if isinstance(last_output, torch.Tensor):
+                # 尝试对齐标签形状
+                if last_output.shape[-1] != labels.shape[-1]:
+                    print(f"  调整标签形状: {tuple(labels.shape)} -> 插值到长度 {last_output.shape[-1]}")
+                    aligned_labels = torch.nn.functional.interpolate(
+                        labels, 
+                        size=last_output.shape[-1], 
+                        mode='linear', 
+                        align_corners=False
+                    )
+                else:
+                    aligned_labels = labels
+                
+                loss = criterion(last_output, aligned_labels)
+                matched_output = last_output
+                print(f"✔ 使用最后一个输出（形状: {tuple(last_output.shape)}）计算损失: {loss.item():.6f}")
+            else:
+                raise ValueError(f"无法从输出中提取有效的张量进行损失计算，最后输出类型: {type(last_output)}")
 
     else:
         print(f"✔ 模型输出形状：{outputs.shape}")
         if labels.shape == outputs.shape:
             loss = criterion(outputs, labels)
-            print(f"✔ 损失值：{loss.item()}")
+            matched_output = outputs
+            print(f"✔ 损失值：{loss.item():.6f}")
         else: 
-            print("✘ 模型输出形状与标签形状不匹配，无法计算损失值")
+            print(f"⚠ 模型输出形状 {tuple(outputs.shape)} 与标签形状 {tuple(labels.shape)} 不匹配")
             # 尝试调整形状后计算损失
             try:
-                loss = criterion(outputs.view_as(labels), labels)
-                print(f"✔ 调整形状后计算损失值：{loss.item()}")
-            except:
-                print("✘ 无法通过调整形状计算损失，请检查模型输出和标签的维度")
+                if outputs.shape[-1] != labels.shape[-1]:
+                    aligned_labels = torch.nn.functional.interpolate(
+                        labels, 
+                        size=outputs.shape[-1], 
+                        mode='linear', 
+                        align_corners=False
+                    )
+                    loss = criterion(outputs, aligned_labels)
+                    matched_output = outputs
+                    print(f"✔ 调整标签形状后计算损失值：{loss.item():.6f}")
+                else:
+                    loss = criterion(outputs.view_as(labels), labels)
+                    matched_output = outputs
+                    print(f"✔ 调整输出形状后计算损失值：{loss.item():.6f}")
+            except Exception as e:
+                print(f"✘ 无法通过调整形状计算损失: {e}")
                 loss = criterion(outputs, labels)  # 强制计算以便后续反向传播测试
+                matched_output = outputs
 
 
     # 反向传播
     print("\n============== 反向传播 ==============")
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-    print("✔ 反向传播正常~")
+    try:
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        print("✔ 反向传播正常~")
+    except Exception as e:
+        print(f"✘ 反向传播失败: {e}")
+        import traceback
+        traceback.print_exc()
 
     # 可视化计算图
     print("\n============== 计算图可视化 ==============")
-    graph = make_dot(loss, params=dict(model.named_parameters()))
-    graph.render("model_computation_graph", format="png")
-    print("✔ 计算图已保存为 'model_computation_graph.png'")
+    try:
+        graph = make_dot(loss, params=dict(model.named_parameters()))
+        graph.render("model_computation_graph", format="png")
+        print("✔ 计算图已保存为 'model_computation_graph.png'")
+    except Exception as e:
+        print(f"⚠ 计算图可视化失败: {e}")
 
     # 导出 ONNX 模型
     print("\n============== 导出 ONNX 模型 ==============")
     
-    # 根据输入类型配置输入名称和动态轴
-    if isinstance(inputs, (tuple, list)):
-        input_names = [f"input_{i}" for i in range(len(inputs))]
-        dynamic_axes = {f"input_{i}": {0: "batch_size"} for i in range(len(inputs))}
-    else:
-        input_names = ["input"]
-        dynamic_axes = {"input": {0: "batch_size"}}
-    
-    # 配置输出名称和动态轴
-    if isinstance(outputs, (tuple, list)) and not isinstance(outputs, torch.Tensor):
-        output_names = [f"output_{i}" for i in range(len(outputs))]
-        for i in range(len(outputs)):
-            dynamic_axes[f"output_{i}"] = {0: "batch_size"}
-    else:
-        output_names = ["output"]
-        dynamic_axes["output"] = {0: "batch_size"}
-    
-    torch.onnx.export(
-        model,
-        _input_data,
-        onnx_file_path,
-        input_names=input_names,
-        output_names=output_names,
-        dynamic_axes=dynamic_axes,
-        opset_version=11,
-    )
-    print(f"✔ ONNX 模型已保存至 {onnx_file_path}")
-    print("在 https://netron.app/ 上查看 ONNX 模型结构")
-
-    # # 使用 ONNX Runtime 推理
-    # print("\n============== ONNX Runtime 推理 ==============")
-    # ort_session = onnxruntime.InferenceSession(onnx_file_path)
-    # ort_inputs = {
-    #     onnx_model.graph.input[i].name: (
-    #         inputs[i].cpu().numpy() if isinstance(inputs, (tuple, list))
-    #         else inputs.cpu().numpy()
-    #     )
-    #     for i in range(len(onnx_model.graph.input))
-    # }
-    # ort_outs = ort_session.run(None, ort_inputs)
-    # print(f"ONNX 推理输出：{ort_outs}")
+    try:
+        # 根据输入类型配置输入名称和动态轴
+        if isinstance(inputs, (tuple, list)):
+            input_names = [f"input_{i}" for i in range(len(inputs))]
+            dynamic_axes = {f"input_{i}": {0: "batch_size"} for i in range(len(inputs))}
+        else:
+            input_names = ["input"]
+            dynamic_axes = {"input": {0: "batch_size"}}
+        
+        # 配置输出名称和动态轴（处理多尺度和嵌套结构）
+        output_names = []
+        output_idx = 0
+        
+        if isinstance(outputs, (tuple, list)) and not isinstance(outputs, torch.Tensor):
+            for stage_output in outputs:
+                if isinstance(stage_output, (tuple, list)):
+                    for sub_output in stage_output:
+                        if isinstance(sub_output, torch.Tensor):
+                            output_names.append(f"output_{output_idx}")
+                            dynamic_axes[f"output_{output_idx}"] = {0: "batch_size"}
+                            output_idx += 1
+                elif isinstance(stage_output, torch.Tensor):
+                    output_names.append(f"output_{output_idx}")
+                    dynamic_axes[f"output_{output_idx}"] = {0: "batch_size"}
+                    output_idx += 1
+        else:
+            output_names = ["output"]
+            dynamic_axes["output"] = {0: "batch_size"}
+        
+        torch.onnx.export(
+            model,
+            _input_data,
+            onnx_file_path,
+            input_names=input_names,
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
+            opset_version=11,
+        )
+        print(f"✔ ONNX 模型已保存至 {onnx_file_path}")
+        print("  在 https://netron.app/ 上查看 ONNX 模型结构")
+    except Exception as e:
+        print(f"⚠ ONNX 导出失败: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     from utils import read_json
@@ -166,13 +244,24 @@ if __name__ == "__main__":
     Pulsemodel = config.init_obj('arch', module_arch)
     
     # 将模型移动到CUDA设备
-    Pulsemodel = Pulsemodel.cuda()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    Pulsemodel = Pulsemodel.to(device)
 
-    # 示例输入数据（模拟数据集第1个batch）
+    # 示例输入数据（根据模型实际输入维度）
     batch_size = 128
 
-    y = torch.randn(batch_size, 3, 150).cuda()
-    x = torch.randn(batch_size, 3).cuda()  # 随机生成连续特征
+    # 修正：模型输入应为 (B, input_dim)，默认 input_dim=3
+    x = torch.randn(batch_size, 3).to(device)  # 工况特征输入
+    
+    # 标签数据（目标加速度波形）
+    y = torch.randn(batch_size, 3, 150).to(device)  # (B, C, L) 三轴加速度
+
+    print(f"\n{'='*80}")
+    print(f"模型类型: {type(Pulsemodel).__name__}")
+    print(f"输入数据形状: {x.shape}")
+    print(f"标签数据形状: {y.shape}")
+    print(f"计算设备: {device}")
+    print(f"{'='*80}")
 
     # 测试模型
     test_model(Pulsemodel, inputs=x, labels=y)

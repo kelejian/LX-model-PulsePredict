@@ -1,4 +1,4 @@
-import json5
+import json
 import torch
 import pandas as pd
 from pathlib import Path
@@ -18,12 +18,12 @@ def ensure_dir(dirname):
 def read_json(fname):
     fname = Path(fname)
     with fname.open('rt', encoding='utf-8') as handle:
-        return json5.load(handle, object_hook=OrderedDict)
+        return json.load(handle, object_hook=OrderedDict)
 
 def write_json(content, fname):
     fname = Path(fname)
     with fname.open('wt', encoding='utf-8') as handle:
-        json5.dump(content, handle, indent=4, sort_keys=False)
+        json.dump(content, handle, indent=4, sort_keys=False)
 
 def inf_loop(data_loader):
     ''' wrapper function for endless data loader. '''

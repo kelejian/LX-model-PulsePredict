@@ -2,16 +2,14 @@
 
 ## 1. 项目简介
 
-本项目是一个基于 PyTorch 实现的深度学习模型，旨在根据车辆碰撞的初始工况参数，快速预测碰撞过程中特定点的加速度时序波形。其核心任务是创建一个数据驱动的代理模型，以替代传统、计算成本高昂的有限元仿真软件。
+本项目是一个基于 PyTorch 实现的深度学习模型，旨在根据车辆碰撞刚性墙的初始工况参数，快速预测碰撞加速度时序波形。其核心任务是创建一个数据驱动的代理模型，以替代传统、计算成本高昂的有限元仿真软件。
 
 * **输入**: 3个碰撞工况标量 (碰撞速度、碰撞角度、重叠率)。
 * **输出**: 3条加速度时序波形 (X/Y向线加速度, Z向角加速度)，每条波形包含150个时间点。
 
-本指南将引导新用户完成从环境配置、数据准备到模型训练和测试的全过程。
-
 ## 2. 环境配置
 
-在开始之前，请确保您已安装 Python 和 PyTorch。然后，通过 pip 安装项目所需的依赖包：
+请确保已安装 Python 和 PyTorch。然后，通过 pip 安装项目所需的依赖包：
 
 ```bash
 # 建议在一个虚拟环境中执行
@@ -147,19 +145,16 @@ python interfere_data.py
 
 * `name`: 实验名称，用于创建文件夹。
 * `arch`: 定义模型架构。
-    * `type`: 模型类名，如 `PulseCNN`
+    * `type`: 模型类名，如 `HybridPulseCNN`
     * `args`: 模型的初始化参数，如 `GauNll_use` (是否使用高斯NLLLoss)。
 * `data_loader_train` / `data_loader_test`: 数据加载器的配置。
     * `packaged_data_path`: 数据文件路径。
-    * `pulse_norm_mode`: 输出波形的归一化模式 (`'none'`, `'minmax'`, `'absmax'`)。
     * `scaler_path`: 归一化 scaler 文件的保存/加载路径。
 * `loss`: 损失函数的配置。
-    * `type`: `MultiLoss` (用于CNN) 或 `GaussianNLLLoss` (用于MLP) 等。
-    * `args`: 损失函数的参数，例如 `MultiLoss` 的 `scale_loss_weights` 和 `base_loss_type`。
 * `metrics`: 在日志中要追踪的评估指标列表，对应 `model/metric.py` 中的函数名。
 * `trainer`: 训练器的配置。
     * `epochs`: 总训练轮数。
-    * `monitor`: 模型性能监控指标，格式为 `'min/max <metric_name>'`。例如 `'max iso_rating_x'` 表示保存 `iso_rating_x` 指标最大时的模型。
+    * `monitor`: 模型性能监控指标，格式为 `'min/max <metric_name>'`。例如 `'max val_iso_rating_x'` 表示保存验证集上 `iso_rating_x` 指标最大时的模型。
     * `early_stop`: 如果监控指标连续 `n` 轮没有改善，则提前停止训练。
 
 ## 7. 项目结构
@@ -175,6 +170,7 @@ LX-model-dev/
 ├── utils/            # 辅助工具函数
 ├── config.json       # 主配置文件
 ├── train.py          # 训练脚本
-└── test.py           # 测试脚本
-```
+├── test.py           # 测试脚本
+└── interfere_data.py # 使用训练好的模型绘制预测精度散点图
+---
 

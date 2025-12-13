@@ -27,11 +27,11 @@ class ResMLPBlock(nn.Module):
             nn.Linear(hidden_dim, hidden_dim, bias=False),
             nn.BatchNorm1d(hidden_dim),
             nn.SiLU(inplace=True),
-            nn.Dropout(dropout),
+            # nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim, bias=False),
             nn.BatchNorm1d(hidden_dim),
             nn.SiLU(inplace=True),
-            nn.Dropout(dropout)
+            # nn.Dropout(dropout)
         )
 
     def forward(self, x):
@@ -72,7 +72,7 @@ class SeedFeatureProjector(nn.Module):
             nn.Conv1d(pos_dim, proj_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm1d(proj_channels),
             nn.SiLU(inplace=True),
-            nn.Dropout(dropout),
+            # nn.Dropout(dropout),
             nn.Conv1d(proj_channels, output_channels, kernel_size=3, padding=1, bias=True) 
             # 输出即为“标准基函数”
         )

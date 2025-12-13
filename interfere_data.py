@@ -29,7 +29,7 @@ plt.rcParams['axes.unicode_minus'] = False    # 负号正常显示
 # --------------------------------------------------------------------------------------
 # 指定要加载的模型检查点 (.pth) 文件路径
 CHECKPOINT_PATH = (
-    r"E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\LX-model-PulsePredict\saved\models\HybridPulseCNN\1126_212510\resume_1126_220038\model_best_final.pth"
+    r"E:\WPS Office\1628575652\WPS企业云盘\清华大学\我的企业文档\课题组相关\理想项目\LX-model-PulsePredict\saved\models\HybridPulseCNN\1213_095952\model_best.pth"
 )
 
 # 指定要分析的数据集 (.npz) 文件路径 (例如，测试集或包含所有工况的完整数据集)
@@ -76,21 +76,23 @@ BATCH_SIZE = 512
 
 # ISO Rating 的颜色映射范围 (vmin, vmax)
 ISO_RATING_RANGE_X = (0.5, 1.0)  # X 轴范围
-ISO_RATING_RANGE_Y = (0.1, 0.9)  # Y 轴范围
-ISO_RATING_RANGE_Z = (0, 0.8)  # Z 轴范围
+ISO_RATING_RANGE_Y = (0.3, 0.9)  # Y 轴范围
+ISO_RATING_RANGE_Z = (0.2, 0.8)  # Z 轴范围
 
 PLOT_WAVEFORM_CONFIG = {
-    'target_case_ids': [5254,6878,8172,4532,698,918,58,2542,3078,1153,1976,2068,4120,1043,7760],     # 指定要强制绘图的 case_id 列表，例如 [10, 25]
+    # 'target_case_ids': [5254,6878,8172,4532,698,918,58,2542,3078,1153,1976,2068,4120,1043,7760],     # 指定要强制绘图的 case_id 列表，例如 [10, 25]
+    'target_case_ids': [],
     'plot_low_score': True,    # 是否自动绘制低分案例
     'low_score_threshold': 0.55 # 低分阈值 (ISO Rating X < 0.5)
 }
 
-EXPORT_EXCEL_CASE_IDS = [3249, 4024, 6561, 5254, 704, 2350] 
+# EXPORT_EXCEL_CASE_IDS = [3249, 4024, 6561, 5254, 704, 2350] 
+EXPORT_EXCEL_CASE_IDS = [] 
 
 # 1.5. 组合波形绘图配置
 # --------------------------------------------------------------------------------------
 COMBINED_PLOT_CONFIG = {
-    'enabled': True,  # 是否启用组合绘图
+    'enabled': False,  # 是否启用组合绘图
     'case_groups': [
         # 每个组将绘制在一张图上
         {
@@ -338,7 +340,7 @@ def main():
         config = json.load(f)
 
     # 创建保存目录
-    save_plot_dir = run_root_dir / "scatter_plots"
+    save_plot_dir = run_root_dir / "prediction_scatter_plots"
     os.makedirs(save_plot_dir, exist_ok=True)
     logger.info(f"图表将保存至: {save_plot_dir}")
 
